@@ -2,7 +2,7 @@ NAME := ouo
 
 SRC_DIR := src
 OBJ_DIR := obj
-SRCS := $(wildcard src/*.c)
+SRCS := $(wildcard $(SRC_DIR)/*.c)
 OBJS := $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 CC := clang

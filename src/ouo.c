@@ -2,4 +2,4 @@
 
 #include <stdio.h>
 
-void hi(void) { printf("ouo will be here...\n"); }
+void ouo_hi(char *src) { printf("%s", src); }
