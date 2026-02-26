@@ -1,4 +1,6 @@
-/// Standalone ouo interpreter
+/*
+ * Standalone ouo interpreter
+ */
 
 #include <assert.h>
 #include <errno.h>
@@ -19,7 +21,7 @@ static void start_repl() {
       break;
     }
 
-    ouo_hi(line);
+    ouo_parse(line);
   }
 }
 
@@ -48,7 +50,7 @@ static char *read_file(const char *path) {
 
 static void run_file(const char *path) {
   char *src = read_file(path);
-  ouo_hi(src);
+  ouo_parse(src);
 }
 
 int main(int argc, const char **argv) {

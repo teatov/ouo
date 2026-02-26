@@ -1,3 +1,4 @@
 BasedOnStyle: LLVM
 AlignEscapedNewlines: DontAlign
 AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortLoopsOnASingleLine: true
