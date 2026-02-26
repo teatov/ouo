@@ -32,7 +32,7 @@ static char *read_file(const char *path) {
               strerror(errno));
 
   fseek(file, 0L, SEEK_END);
-  size_t file_size = ftell(file);
+  size_t file_size = (size_t)ftell(file);
   rewind(file);
 
   char *buffer = (char *)malloc(file_size + 1);

@@ -1,4 +1,5 @@
 BasedOnStyle: LLVM
 AlignEscapedNewlines: DontAlign
+AllowShortCaseLabelsOnASingleLine: true
 AllowShortIfStatementsOnASingleLine: AllIfsAndElse
 AllowShortLoopsOnASingleLine: true
