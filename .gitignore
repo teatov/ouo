@@ -1,4 +1,5 @@
 .cache/
+.zed/
 obj/
 
 compile_commands.json

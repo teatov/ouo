@@ -2,12 +2,50 @@
  * The ouo language
  */
 
-#include <stdbool.h>
-#include <stddef.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "ouo.h"
+
+/* Error handling */
+
+void ouo_err_print(OuoError *err, const char *src, const char *path) {
+  size_t line = 0;
+  size_t col = 0;
+  const char *line_start = src;
+
+  for (const char *p = src; *p != '\0' && p < err->start; p++) {
+    if (*p == '\n') {
+      line++;
+      col = 0;
+      line_start = p + 1;
+    } else col++;
+  }
+
+  size_t line_len = 0;
+  const char *line_end = line_start;
+  while (*line_end != '\0' && *line_end != '\n') line_end++;
+  line_len = (size_t)(line_end - line_start);
+
+  if (path != NULL) printf("%s:", path);
+  printf("%zu:%zu: ", line + 1, col + 1);
+
+  switch (err->code) {
+  case OUO_OK: printf("OK :)"); break;
+  case OUO_ERR_OUT_OF_MEMORY: printf("OUT OF MEMORY"); break;
+  case OUO_ERR_PARSING_FAILED: printf("PARSING FAILED"); break;
+  case OUO_ERR_SYNTAX: printf("SYNTAX ERROR"); break;
+  default: printf("ERROR"); break;
+  }
+
+  printf(": %s\n", err->msg);
+  printf("%.*s\n", (int)line_len, line_start);
+  for (size_t i = 0; i < col; i++) printf(" ");
+  for (size_t i = 0; i < err->len; i++) printf("^");
+  printf("\n");
+}
 
 /* Lexing */
 
@@ -111,8 +149,11 @@ typedef struct {
   OuoToken curr;
   OuoToken peek;
 
+  bool failed;
+  OuoErrors errors;
+
   struct {
-    struct OuoParseRule *items;
+    const struct OuoParseRule *items;
     size_t count;
   } rules;
 } OuoParser;
@@ -137,7 +178,7 @@ static void p_advance(OuoParser *p) {
   p->peek = l_next_token(p->l);
 }
 
-static void p_init(OuoParser *p, OuoLexer *l, OuoParseRule *rules,
+static void p_init(OuoParser *p, OuoLexer *l, const OuoParseRule *rules,
                    size_t rules_count) {
   p->l = l;
   p->rules.items = rules;
@@ -145,6 +186,27 @@ static void p_init(OuoParser *p, OuoLexer *l, OuoParseRule *rules,
   p_advance(p);
   p_advance(p);
 }
+
+#define p_err(p, tok, err_code, fmt, ...) \
+  do { \
+    *p->failed = true; \
+    OuoError err = { \
+        .code = err_code, .start = tok.start, .len = tok.len, .msg = {0}}; \
+    snprintf(err.msg, OUO_ERR_MSG_SIZE - 1, fmt, ##__VA_ARGS__); \
+    ouo_da_append(p->errors, err); \
+  } while (0)
+
+#define p_assert(p, expr, tok, err_code, fmt, ...) \
+  if (!(expr)) { \
+    p_err(p, tok, err_code, fmt, ##__VA_ARGS__); \
+    return NULL; \
+  }
+
+#define p_assert_defer(p, expr, tok, err_code, fmt, ...) \
+  if (!(expr)) { \
+    p_err(p, tok, err_code, fmt, ##__VA_ARGS__); \
+    goto errdefer; \
+  }
 
 static OuoAst *p_ast_new(OuoParser *p, OuoAstKind kind) {
   OuoAst *ast = malloc(sizeof(OuoAst));
@@ -154,39 +216,70 @@ static OuoAst *p_ast_new(OuoParser *p, OuoAstKind kind) {
   return ast;
 }
 
-static OuoParseRule *p_get_rule(OuoParser *p, OuoTokenKind tok) {
+static const OuoParseRule *p_get_rule(OuoParser *p, OuoTokenKind tok) {
   if (tok >= p->rules.count) return &p->rules.items[OUO_TOK_EOF];
   return &p->rules.items[tok];
 }
 
 static OuoAst *p_expression(OuoParser *p, OuoPrecedence prec) {
   OuoParsePrefixFn prefix_fn = p_get_rule(p, p->curr.kind)->prefix_fn;
-  ouo_assert(prefix_fn != NULL, OUO_ERR_SYNTAX_NO_PREFIX_FN,
-             "no prefix fn for '%.*s'", (int)p->curr.len, p->curr.start);
+  p_assert(&p, prefix_fn != NULL, p->curr, OUO_ERR_SYNTAX,
+           "Expected an expression, got '%.*s'.", (int)p->curr.len,
+           p->curr.start);
 
   OuoAst *left = prefix_fn(p);
 
-  while (prec < p_get_rule(p, p->peek.kind)->prec) {
+  while (p->peek.kind != OUO_TOK_EOF &&
+         prec <= p_get_rule(p, p->peek.kind)->prec) {
     OuoParseInfixFn infix_fn = p_get_rule(p, p->peek.kind)->infix_fn;
-    ouo_assert(infix_fn != NULL, OUO_ERR_SYNTAX_NO_INFIX_FN,
-               "no infix fn for '%.*s'", (int)p->peek.len, p->peek.start);
+    p_assert_defer(&p, infix_fn != NULL, p->peek, OUO_ERR_SYNTAX,
+                   "Expected a binary operator, got '%.*s'.", (int)p->peek.len,
+                   p->peek.start);
 
     p_advance(p);
     left = infix_fn(p, left);
   }
 
   return left;
+
+errdefer:
+  ouo_ast_free(left);
+  return NULL;
 }
 
 static OuoAst *p_lit_int(OuoParser *p) {
+  errno = 0;
+  char *end = NULL;
+  ouo_int_t lit = ouo_strtoi(p->curr.start, &end, 10);
+
+  p_assert(&p, errno == 0, p->curr, OUO_ERR_PARSING_FAILED,
+           "Integer literal value out of range (min %" OUO_PRId
+           ", max %" OUO_PRId ").",
+           OUO_INT_MIN, OUO_INT_MAX, LONG_MAX);
+  p_assert(&p, end == p->curr.start + p->curr.len, p->curr,
+           OUO_ERR_PARSING_FAILED,
+           "Integer literal length mismatch. Expected %zu, read %zu.",
+           p->curr.len, end - p->curr.start);
+
   OuoAst *ast = p_ast_new(p, OUO_AST_LITERAL_INT);
-  ast->lit_int = strtol(p->curr.start, NULL, 10);
+  ast->lit_int = lit;
   return ast;
 }
 
 static OuoAst *p_lit_float(OuoParser *p) {
+  errno = 0;
+  char *end = NULL;
+  ouo_float_t lit = strtod(p->curr.start, &end);
+
+  p_assert(&p, errno == 0, p->curr, OUO_ERR_PARSING_FAILED, "%s.",
+           "Float literal value out of range.");
+  p_assert(&p, end == p->curr.start + p->curr.len, p->curr,
+           OUO_ERR_PARSING_FAILED,
+           "Float literal length mismatch. Expected %zu, read %zu.",
+           p->curr.len, end - p->curr.start);
+
   OuoAst *ast = p_ast_new(p, OUO_AST_LITERAL_FLOAT);
-  ast->lit_float = strtod(p->curr.start, NULL);
+  ast->lit_float = lit;
   return ast;
 }
 
@@ -203,7 +296,7 @@ static OuoAst *p_bin_op(OuoParser *p, OuoAst *left) {
   return ast;
 }
 
-static OuoParseRule p_rules[] = {
+static const OuoParseRule p_rules[] = {
     [OUO_TOK_EOF] = {NULL, NULL, OUO_PREC_LOWEST},
     // Literals
     [OUO_TOK_LITERAL_INT] = {p_lit_int, NULL, OUO_PREC_LOWEST},
@@ -213,7 +306,7 @@ static OuoParseRule p_rules[] = {
     [OUO_TOK_ASTERISK] = {NULL, p_bin_op, OUO_PREC_PRODUCT},
 };
 
-void ouo_parse(const char *src) {
+OuoParseResult ouo_parse(const char *src) {
   OuoLexer l = {0};
   l_init(&l, src);
 
@@ -224,16 +317,21 @@ void ouo_parse(const char *src) {
     printf(" '%.*s'] ", (int)tok.len, tok.start);
     if (tok.kind == OUO_TOK_EOF) break;
   }
-
   printf("\n");
 
   l_init(&l, src);
   OuoParser p = {0};
   p_init(&p, &l, p_rules, ouo_arr_len(p_rules));
+
   OuoAst *expr = p_expression(&p, OUO_PREC_LOWEST);
 
-  ouo_ast_print(expr);
-  printf("\n");
+  OuoParseResult res = {
+      .failed = p.failed,
+      .ast = expr,
+      .errors = p.errors,
+  };
+
+  return res;
 }
 
 static void ast_kind_print(OuoAstKind kind) {
@@ -246,17 +344,36 @@ static void ast_kind_print(OuoAstKind kind) {
   }
 }
 
+void ouo_ast_free(OuoAst *ast) {
+  if (ast == NULL) return;
+
+  switch (ast->kind) {
+  // Literals
+  case OUO_AST_LITERAL_INT:
+  case OUO_AST_LITERAL_FLOAT: free(ast); break;
+  // Expressions
+  case OUO_AST_BIN_OP:
+    ouo_ast_free(ast->bin_op.left);
+    ouo_ast_free(ast->bin_op.right);
+    free(ast);
+    break;
+  }
+}
+
 void ouo_ast_print(OuoAst *ast) {
+  if (ast == NULL) {
+    printf("NULL");
+    return;
+  }
+
   printf("(");
   ast_kind_print(ast->kind);
   printf(" ");
 
   switch (ast->kind) {
   // Literals
-  case OUO_AST_LITERAL_INT:
-  case OUO_AST_LITERAL_FLOAT:
-    printf("'%.*s'", (int)ast->len, ast->start);
-    break;
+  case OUO_AST_LITERAL_INT: printf("%ld", ast->lit_int); break;
+  case OUO_AST_LITERAL_FLOAT: printf("%f", ast->lit_float); break;
   // Expressions
   case OUO_AST_BIN_OP:
     ouo_ast_print(ast->bin_op.left);

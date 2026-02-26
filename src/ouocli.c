@@ -2,13 +2,30 @@
  * Standalone ouo interpreter
  */
 
-#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "ouo.h"
+
+static void run(const char *src, const char *path) {
+  OuoParseResult parse_res = ouo_parse(src);
+
+  ouo_ast_print(parse_res.ast);
+  printf("\n");
+
+  if (parse_res.failed) {
+    ouo_da_foreach(OuoError, err, &parse_res.errors) {
+      ouo_err_print(err, src, path);
+    }
+    goto defer;
+  }
+
+defer:
+  ouo_da_free(parse_res.errors);
+  ouo_ast_free(parse_res.ast);
+}
 
 #define REPL_LINE_SIZE 1024
 
@@ -21,7 +38,7 @@ static void start_repl() {
       break;
     }
 
-    ouo_parse(line);
+    run(line, NULL);
   }
 }
 
@@ -50,7 +67,8 @@ static char *read_file(const char *path) {
 
 static void run_file(const char *path) {
   char *src = read_file(path);
-  ouo_parse(src);
+  run(src, path);
+  free(src);
 }
 
 int main(int argc, const char **argv) {
