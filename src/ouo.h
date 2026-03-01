@@ -1,17 +1,36 @@
-/*
- * The ouo language
- */
+///
+/// The ouo language
+///
 
-#ifndef OUO_H_
-#define OUO_H_
+#ifndef OUO_H
+#define OUO_H
 
 #include <stdbool.h>
 #include <stddef.h>
 
-/* Helpers */
+//
+// Helper macros
+//
 
-#define OUO_STRINGIZE(x) #x
-#define OUO_XSTRINGIZE(x) OUO_STRINGIZE(x)
+#define OUO_STRINGIZE(X) #X
+#define OUO_PP_STRINGIZE(X) OUO_STRINGIZE(X)
+#define OUO_CODEPOS __FILE__ ":" OUO_PP_STRINGIZE(__LINE__) ": "
+
+#define ouo_abort(expr, err_code, fmt, ...) \
+  do { \
+    ouo_printerr(fmt "\n", ##__VA_ARGS__); \
+    exit(err_code); \
+  } while (0)
+
+#define ouo_assert(expr, err_code, fmt, ...) \
+  if (!(expr)) ouo_abort(expr, err_code, fmt, ##__VA_ARGS__)
+
+#define ouo_assertf(expr, err_code, fmt, ...) \
+  ouo_assert(expr, err_code, OUO_CODEPOS fmt, ##__VA_ARGS__)
+
+#define ouo_assert_nomem(ptr) \
+  ouo_assertf((ptr) != NULL, OUO_ERR_OUT_OF_MEMORY, \
+      "Cannot allocate memory for '" #ptr "'.")
 
 // Arrays
 
@@ -19,46 +38,44 @@
 
 #define OUO_DA_INIT_CAPACITY 8
 
-#define ouo_da_reserve(da, expected_capacity) \
+#define ouo_da_reserve(da, new_capacity) \
   do { \
-    if ((expected_capacity) > (da)->capacity) { \
+    if ((new_capacity) > (da)->capacity) { \
       if ((da)->capacity == 0) (da)->capacity = OUO_DA_INIT_CAPACITY; \
-      while ((expected_capacity) > (da)->capacity) (da)->capacity *= 2; \
+      while ((new_capacity) > (da)->capacity) (da)->capacity *= 2; \
       (da)->items = \
-          realloc((da)->items, (da)->capacity * sizeof(*(da)->items)); \
-      ouo_assert((da)->items != NULL, OUO_ERR_OUT_OF_MEMORY, \
-                 "Cannot allocate memory for array '" #da "'."); \
+          ouo_realloc((da)->items, (da)->capacity * sizeof(*(da)->items)); \
+      ouo_assert_nomem((da)->items); \
     } \
   } while (0)
 
 #define ouo_da_append(da, item) \
   do { \
-    ouo_da_reserve((da), (da)->count + 1); \
+    ouo_da_reserve(da, (da)->count + 1); \
     (da)->items[(da)->count] = (item); \
     (da)->count++; \
   } while (0)
 
-#define ouo_da_free(da) free((da).items)
+#define ouo_da_free(da) ouo_free((da).items)
 
-#define ouo_da_foreach(Type, it, da) \
-  for (Type *it = (da)->items; it < (da)->items + (da)->count; ++it)
+#define OUO_DA_FOREACH(T, item, da) \
+  for (T *item = (da)->items; item < (da)->items + (da)->count; ++item)
 
-// Asserting
+// Memory management
 
-#define ouo_abort(expr, err_code, fmt, ...) \
-  do { \
-    fprintf(stderr, fmt "\n", ##__VA_ARGS__); \
-    exit(err_code); \
-  } while (0)
+#define ouo_alloc(...) malloc(__VA_ARGS__)
+#define ouo_realloc(...) realloc(__VA_ARGS__)
+#define ouo_free(...) free(__VA_ARGS__)
 
-#define ouo_assertf(expr, err_code, fmt, ...) \
-  if (!(expr)) ouo_abort(expr, err_code, fmt, ##__VA_ARGS__)
+// Printing
 
-#define ouo_assert(expr, err_code, fmt, ...) \
-  ouo_assertf(expr, err_code, __FILE__ ":" OUO_XSTRINGIZE(__LINE__) ": " fmt, \
-              ##__VA_ARGS__)
+#define ouo_print(...) printf(__VA_ARGS__)
+#define ouo_printerr(...) fprintf(stderr, ##__VA_ARGS__)
+#define ouo_printdbg(...) fprintf(stderr, ##__VA_ARGS__)
 
-/* Error handling */
+//
+// Error handling
+//
 
 typedef enum {
   OUO_OK,
@@ -78,32 +95,40 @@ typedef struct OuoError {
   char msg[OUO_ERR_MSG_SIZE];
 } OuoError;
 
+/// Owns memory for `items`.
 typedef struct {
   struct OuoError *items;
   size_t count;
   size_t capacity;
 } OuoErrors;
 
-void ouo_err_print(OuoError *err, const char *src, const char *path);
+/// Prints a formatted error message,
+/// pointing at its location in the source code.
+/// If `path` is not `NULL`, adds it before the line and column.
+void ouo_err_msg_print(OuoError *err, const char *src, const char *path);
 
-/* Data types */
+//
+// Data types
+//
 
 #define OUO_INT_MIN LONG_MIN
 #define OUO_INT_MAX LONG_MAX
-#define ouo_strtoi strtol
+#define ouo_strtoi(...) strtol(__VA_ARGS__)
 #define OUO_PRId "ld"
 
 typedef long ouo_int_t;
 typedef double ouo_float_t;
 
-/* Lexing */
+//
+// Lexing
+//
 
 typedef enum {
   OUO_TOK_EOF,
   OUO_TOK_ILLEGAL,
   // Literals
-  OUO_TOK_LITERAL_INT,
-  OUO_TOK_LITERAL_FLOAT,
+  OUO_TOK_LIT_INT,
+  OUO_TOK_LIT_FLOAT,
   // Operators
   OUO_TOK_PLUS,
   OUO_TOK_ASTERISK,
@@ -115,16 +140,19 @@ typedef struct {
   size_t len;
 } OuoToken;
 
-/* Parsing */
+//
+// Parsing
+//
 
 typedef enum {
   // Literals
-  OUO_AST_LITERAL_INT,
-  OUO_AST_LITERAL_FLOAT,
+  OUO_AST_LIT_INT,
+  OUO_AST_LIT_FLOAT,
   // Expressions
   OUO_AST_BIN_OP,
 } OuoAstKind;
 
+/// Owns memory for any child AST nodes.
 typedef struct OuoAst {
   OuoAstKind kind;
   const char *start;
@@ -143,15 +171,20 @@ typedef struct OuoAst {
   };
 } OuoAst;
 
+/// Owns memory for `ast` and `errors.items`.
 typedef struct {
   bool failed;
   OuoAst *ast;
   OuoErrors errors;
 } OuoParseResult;
 
+/// Caller must free the result's `ast` and `errors.items`.
 OuoParseResult ouo_parse(const char *src);
 
+/// Recursively frees the entire AST tree.
 void ouo_ast_free(OuoAst *ast);
-void ouo_ast_print(OuoAst *ast);
 
-#endif // OUO_H_
+/// Prints the AST tree for debugging.
+void ouo_ast_dump(OuoAst *ast);
+
+#endif // OUO_H

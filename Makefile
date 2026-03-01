@@ -6,7 +6,7 @@ SRCS := $(wildcard $(SRC_DIR)/*.c)
 OBJS := $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 CC := clang
-CFLAGS := -g3 -std=c99 -Wall -Wextra -Wconversion
+CFLAGS := -g3 -Og -std=c99 -Wall -Wextra -Wconversion -Wmissing-prototypes
 
 all: $(NAME)
 

@@ -1,5 +1,12 @@
-BasedOnStyle: LLVM
+AlignAfterOpenBracket: false
 AlignEscapedNewlines: DontAlign
 AllowShortCaseLabelsOnASingleLine: true
 AllowShortIfStatementsOnASingleLine: AllIfsAndElse
 AllowShortLoopsOnASingleLine: true
+BasedOnStyle: LLVM
+IncludeBlocks: Regroup
+IndentCaseLabels: true
+QualifierAlignment: Left
+RemoveBracesLLVM: true
+RemoveParentheses: MultipleParentheses
+IndentPPDirectives: BeforeHash
