@@ -1,24 +1,32 @@
 NAME := ouo
+# release: ENV=prod
+ENV := dev
 
 SRC_DIR := src
-OBJ_DIR := obj
+BUILD_DIR := build
+BUILD_ENV_DIR := $(BUILD_DIR)/$(ENV)
 SRCS := $(wildcard $(SRC_DIR)/*.c)
-OBJS := $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+OBJS := $(SRCS:$(SRC_DIR)/%.c=$(BUILD_ENV_DIR)/%.o)
 
 CC := clang
-CFLAGS := -g3 -Og -std=c99 -Wall -Wextra -Wconversion -Wmissing-prototypes
+CFLAGS.dev := -g3 -Og
+CFLAGS.prod := -O3 -Werror
+CFLAGS := $(CFLAGS.$(ENV)) -std=c99 \
+	-Wall -Wextra -Wconversion -Wmissing-prototypes
+
+MAKEFLAGS += --no-print-directory
 
 all: $(NAME)
 
 $(NAME): $(OBJS)
 	$(CC) $(OBJS) -o $(NAME)
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+$(BUILD_ENV_DIR)/%.o: $(SRC_DIR)/%.c
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf $(OBJ_DIR) $(NAME)
+	rm -rf $(BUILD_DIR) $(NAME)
 
 re:
 	$(MAKE) clean

@@ -1,6 +1,6 @@
 .cache/
 .zed/
-obj/
+build/
 
 compile_commands.json
 ouo
