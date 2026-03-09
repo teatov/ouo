@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: [-DOUO_IMPLEMENTATION, -Wno-macro-redefined]
