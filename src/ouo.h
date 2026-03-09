@@ -21,14 +21,14 @@
 #define OUO_PP_STRINGIZE(X) OUO_STRINGIZE(X)
 #define OUO_CODEPOS __FILE__ ":" OUO_PP_STRINGIZE(__LINE__) ": "
 
-#define ouo_abort(expr, err_code, fmt, ...) \
+#define ouo_abort(err_code, fmt, ...) \
   do { \
     ouo_printerr(fmt "\n", ##__VA_ARGS__); \
     exit(err_code); \
   } while (0)
 
 #define ouo_assert(expr, err_code, fmt, ...) \
-  if (!(expr)) ouo_abort(expr, err_code, fmt, ##__VA_ARGS__)
+  if (!(expr)) ouo_abort(err_code, fmt, ##__VA_ARGS__)
 
 #define ouo_assertf(expr, err_code, fmt, ...) \
   ouo_assert(expr, err_code, OUO_CODEPOS fmt, ##__VA_ARGS__)
@@ -101,8 +101,11 @@ typedef enum {
   OUO_ERR_INCORRECT_USAGE,
   OUO_ERR_FILE_NOT_READ,
   // Parsing
-  OUO_ERR_PARSING_FAILED,
+  OUO_ERR_PARSE_FAIL,
   OUO_ERR_SYNTAX,
+  // Compilation
+  OUO_ERR_COMPILE_FAIL,
+  OUO_ERR_TYPE,
   // Runtime
   OUO_ERR_RUNTIME,
 } OuoErrorCode;
@@ -146,6 +149,13 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path);
   #define OUO_PRIf "f"
 #endif
 
+typedef enum {
+  OUO_TYPE_VOID,
+  // Scalar
+  OUO_TYPE_INT,
+  OUO_TYPE_FLOAT,
+} OuoTypeKind;
+
 //
 // Lexing
 //
@@ -182,8 +192,9 @@ typedef enum {
 /// Owns memory for any child AST nodes.
 typedef struct OuoAst {
   OuoAstKind kind;
-  const char *start;
-  size_t len;
+  OuoToken tok;
+
+  OuoTypeKind type;
 
   union {
     // Literals
@@ -206,7 +217,7 @@ typedef struct {
   OuoErrors errors;
 } OuoParseResult;
 
-/// Caller owns the result's `ast` and `errors.items`.
+/// Caller owns the result's `ast` and `errors`.
 OuoParseResult ouo_parse(const char *src);
 
 /// Recursively frees the entire AST tree.
@@ -216,10 +227,8 @@ void ouo_ast_free(OuoAst *ast);
 void ouo_ast_dump(OuoAst *ast);
 
 //
-// Compiler
+// Compilation
 //
-
-#define ouo_op_t uint8_t
 
 typedef enum {
   // Objects
@@ -237,7 +246,7 @@ struct OuoObject;
 
 /// Owns memory for `items`, `constants.items` and `lines.items`.
 typedef struct {
-  ouo_op_t *items;
+  uint8_t *items;
   size_t count;
   size_t capacity;
 
@@ -254,7 +263,18 @@ typedef struct {
   } lines;
 } OuoChunk;
 
-/// Frees bytecode constants, and lines of the chunk.
+/// Owns memory for `chunk.items`, `chunk.constants.items`,
+/// `chunk.lines.items` and `errors.items`.
+typedef struct {
+  bool failed;
+  OuoChunk chunk;
+  OuoErrors errors;
+} OuoCompileResult;
+
+/// Caller owns the result's `chunk` and `errors`.
+OuoCompileResult ouo_compile(OuoAst *ast);
+
+/// Frees bytecode, constants, and lines of the chunk.
 void ouo_chunk_free(OuoChunk *chunk);
 
 /// Prints bytecode of the chunk for debugging.
@@ -263,8 +283,6 @@ void ouo_chunk_dump(OuoChunk *chunk, const char *name);
 //
 // Virtual machine
 //
-
-#define OUO_VM_STACK_MAX 256
 
 typedef enum {
   // Pass by value
@@ -282,12 +300,20 @@ typedef struct OuoObject {
   };
 } OuoObject;
 
-typedef struct {
-  bool failed;
-  OuoError err;
-} OuoInterpretResult;
+#define OUO_VM_STACK_MAX 256
 
-OuoInterpretResult ouo_interpret(OuoChunk *chunk);
+/// Owns memory for `errors.items`.
+typedef struct {
+  OuoChunk chunk;
+  OuoObject stack[OUO_VM_STACK_MAX];
+  OuoObject *stack_top;
+  OuoObject *stack_max;
+
+  bool failed;
+  OuoError error;
+} OuoVm;
+
+void ouo_interpret(OuoVm *vm, OuoChunk *chunk);
 
 #endif // OUO_H
 
@@ -304,11 +330,12 @@ OuoInterpretResult ouo_interpret(OuoChunk *chunk);
 static const char *_ouo_err_code_str(OuoErrorCode err_code) {
   switch (err_code) {
     case OUO_OK: return "OK :)";
-    // General
-    case OUO_ERR_OUT_OF_MEMORY: return "OUT OF MEMORY";
     // Parsing
-    case OUO_ERR_PARSING_FAILED: return "PARSING FAILED";
+    case OUO_ERR_PARSE_FAIL: return "PARSING FAIL";
     case OUO_ERR_SYNTAX: return "SYNTAX ERROR";
+    // Compilation
+    case OUO_ERR_COMPILE_FAIL: return "COMPILATION FAIL";
+    case OUO_ERR_TYPE: return "TYPE ERROR";
     // Runtime
     case OUO_ERR_RUNTIME: return "RUNTIME ERROR";
     default: return "ERROR";
@@ -347,6 +374,19 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
   }
 
   ouo_printerr("\n");
+}
+
+//
+// Data types
+//
+
+static const char *_ouo_type_kind_str(OuoTypeKind kind) {
+  switch (kind) {
+    case OUO_TYPE_VOID: return "void";
+    // Scalar
+    case OUO_TYPE_INT: return "int";
+    case OUO_TYPE_FLOAT: return "float";
+  }
 }
 
 //
@@ -444,15 +484,6 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
   return "";
 }
 
-static void _ouo_l_tok_dump(_OuoLexer *l) {
-  for (;;) {
-    OuoToken tok = _ouo_l_next_token(l);
-    ouo_printdbg(
-        "[ %s '%.*s'] ", _ouo_tok_kind_str(tok.kind), (int)tok.len, tok.start);
-    if (tok.kind == OUO_TOK_EOF) break;
-  }
-}
-
 //
 // Parsing
 //
@@ -490,7 +521,7 @@ typedef struct _OuoParseRule {
 
 #define _ouo_p_err(p, tok, err_code, fmt, ...) \
   do { \
-    *p->failed = true; \
+    p->failed = true; \
     OuoError err = { \
         .code = (err_code), \
         .start = (tok).start, \
@@ -498,7 +529,7 @@ typedef struct _OuoParseRule {
         .msg = {0}, \
     }; \
     snprintf(err.msg, OUO_ERR_MSG_SIZE, fmt, ##__VA_ARGS__); \
-    ouo_da_append(p->errors, err); \
+    ouo_da_append(&p->errors, err); \
   } while (0)
 
 static inline void _ouo_p_advance(_OuoParser *p) {
@@ -515,12 +546,12 @@ static inline void _ouo_p_init(_OuoParser *p, _OuoLexer *l,
   _ouo_p_advance(p);
 }
 
-static inline OuoAst *_ouo_p_ast_new(_OuoParser *p, OuoAstKind kind) {
+static inline OuoAst *_ouo_ast_new(OuoToken *tok, OuoAstKind kind) {
   OuoAst *ast = ouo_alloc(sizeof(OuoAst));
   ouo_assert_nomem(ast);
   ast->kind = kind;
-  ast->start = p->curr.start;
-  ast->len = p->curr.len;
+  ast->tok = *tok;
+  ast->type = OUO_TYPE_VOID;
   return ast;
 }
 
@@ -530,11 +561,11 @@ static inline const _OuoParseRule *_ouo_p_get_rule(
   return &p->rules.items[tok];
 }
 
-static OuoAst *_ouo_p_expression(_OuoParser *p, _OuoPrecedence prec) {
+static OuoAst *_ouo_p_expr(_OuoParser *p, _OuoPrecedence prec) {
   _OuoParsePrefixFn prefix_fn = _ouo_p_get_rule(p, p->curr.kind)->prefix_fn;
 
   if (prefix_fn == NULL) {
-    _ouo_p_err(&p, p->curr, OUO_ERR_SYNTAX,
+    _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX,
         "Expected an expression, got '%.*s'.", (int)p->curr.len, p->curr.start);
     return NULL;
   }
@@ -546,7 +577,7 @@ static OuoAst *_ouo_p_expression(_OuoParser *p, _OuoPrecedence prec) {
     _OuoParseInfixFn infix_fn = _ouo_p_get_rule(p, p->peek.kind)->infix_fn;
 
     if (infix_fn == NULL) {
-      _ouo_p_err(&p, p->peek, OUO_ERR_SYNTAX,
+      _ouo_p_err(p, p->peek, OUO_ERR_SYNTAX,
           "Expected a binary operator, got '%.*s'.", (int)p->peek.len,
           p->peek.start);
       goto errdefer;
@@ -569,7 +600,7 @@ static OuoAst *_ouo_p_lit_int(_OuoParser *p) {
   ouo_int_t lit = ouo_strtoi(p->curr.start, &end, 10);
 
   if (errno != 0) {
-    _ouo_p_err(&p, p->curr, OUO_ERR_PARSING_FAILED,
+    _ouo_p_err(p, p->curr, OUO_ERR_PARSE_FAIL,
         "Integer literal value out of range (min %" OUO_PRId ", max %" OUO_PRId
         ").",
         OUO_INT_MIN, OUO_INT_MAX);
@@ -577,13 +608,13 @@ static OuoAst *_ouo_p_lit_int(_OuoParser *p) {
   }
 
   if (end != p->curr.start + p->curr.len) {
-    _ouo_p_err(&p, p->curr, OUO_ERR_PARSING_FAILED,
+    _ouo_p_err(p, p->curr, OUO_ERR_PARSE_FAIL,
         "Integer literal length mismatch. Expected %zu, read %zu.", p->curr.len,
         end - p->curr.start);
     return NULL;
   }
 
-  OuoAst *ast = _ouo_p_ast_new(p, OUO_AST_LIT_INT);
+  OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_LIT_INT);
   ast->lit_int = lit;
   return ast;
 }
@@ -594,32 +625,32 @@ static OuoAst *_ouo_p_lit_float(_OuoParser *p) {
   ouo_float_t lit = ouo_strtof(p->curr.start, &end);
 
   if (errno != 0) {
-    _ouo_p_err(&p, p->curr, OUO_ERR_PARSING_FAILED,
-        "Float literal value out of range.");
+    _ouo_p_err(
+        p, p->curr, OUO_ERR_PARSE_FAIL, "Float literal value out of range.");
     return NULL;
   }
 
   if (end != p->curr.start + p->curr.len) {
-    _ouo_p_err(&p, p->curr, OUO_ERR_PARSING_FAILED,
+    _ouo_p_err(p, p->curr, OUO_ERR_PARSE_FAIL,
         "Float literal length mismatch. Expected %zu, read %zu.", p->curr.len,
         end - p->curr.start);
     return NULL;
   }
 
-  OuoAst *ast = _ouo_p_ast_new(p, OUO_AST_LIT_FLOAT);
+  OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_LIT_FLOAT);
   ast->lit_float = lit;
   return ast;
 }
 
 static OuoAst *_ouo_p_bin_op(_OuoParser *p, OuoAst *left) {
-  OuoTokenKind op = p->curr.kind;
-  _OuoPrecedence prec = _ouo_p_get_rule(p, op)->prec;
+  OuoToken op = p->curr;
+  _OuoPrecedence prec = _ouo_p_get_rule(p, op.kind)->prec;
   _ouo_p_advance(p);
-  OuoAst *right = _ouo_p_expression(p, prec);
+  OuoAst *right = _ouo_p_expr(p, prec);
 
-  OuoAst *ast = _ouo_p_ast_new(p, OUO_AST_BIN_OP);
+  OuoAst *ast = _ouo_ast_new(&op, OUO_AST_BIN_OP);
   ast->bin_op.left = left;
-  ast->bin_op.op = op;
+  ast->bin_op.op = op.kind;
   ast->bin_op.right = right;
   return ast;
 }
@@ -638,14 +669,21 @@ OuoParseResult ouo_parse(const char *src) {
   _OuoLexer l = {0};
   _ouo_l_init(&l, src);
 
-  _ouo_l_tok_dump(&l);
+#ifdef OUO_DEBUG
+  for (;;) {
+    OuoToken tok = _ouo_l_next_token(&l);
+    ouo_printdbg(
+        "[%s '%.*s'] ", _ouo_tok_kind_str(tok.kind), (int)tok.len, tok.start);
+    if (tok.kind == OUO_TOK_EOF) break;
+  }
   ouo_printdbg("\n");
+#endif
 
   _ouo_l_init(&l, src);
   _OuoParser p = {0};
   _ouo_p_init(&p, &l, _ouo_p_rules, ouo_arr_len(_ouo_p_rules));
 
-  OuoAst *expr = _ouo_p_expression(&p, OUO_PREC_LOWEST);
+  OuoAst *expr = _ouo_p_expr(&p, OUO_PREC_LOWEST);
 
   return (OuoParseResult){
       .failed = p.failed,
@@ -687,7 +725,7 @@ void ouo_ast_dump(OuoAst *ast) {
     return;
   }
 
-  ouo_printdbg("( %s ", _ouo_ast_kind_str(ast->kind));
+  ouo_printdbg("(%s ", _ouo_ast_kind_str(ast->kind));
 
   switch (ast->kind) {
     // Literals
@@ -705,17 +743,156 @@ void ouo_ast_dump(OuoAst *ast) {
 }
 
 //
-// Compiler
+// Compilation
 //
 
-static inline void _ouo_chunk_write(OuoChunk *chunk, ouo_op_t op, size_t line) {
-  ouo_da_append(chunk, op);
+typedef struct {
+  bool failed;
+  size_t line;
+  OuoErrors errors;
+  bool panic_mode;
+} _OuoCompiler;
+
+#define _ouo_c_err(c, ast, err_code, fmt, ...) \
+  do { \
+    if (!c->panic_mode) { \
+      c->failed = true; \
+      c->panic_mode = true; \
+      OuoError err = { \
+          .code = (err_code), \
+          .start = (ast)->tok.start, \
+          .len = (ast)->tok.len, \
+          .msg = {0}, \
+      }; \
+      snprintf(err.msg, OUO_ERR_MSG_SIZE, fmt, ##__VA_ARGS__); \
+      ouo_da_append(&c->errors, err); \
+    } \
+  } while (0)
+
+static inline void _ouo_chunk_write(
+    OuoChunk *chunk, uint8_t byte, size_t line) {
+  ouo_da_append(chunk, byte);
   ouo_da_append(&chunk->lines, line);
 }
 
-static inline size_t _ouo_chunk_add_constant(OuoChunk *chunk, OuoObject obj) {
-  ouo_da_append(&chunk->constants, obj);
+static inline size_t _ouo_chunk_add_constant(OuoChunk *chunk, OuoObject *obj) {
+  ouo_da_append(&chunk->constants, *obj);
   return chunk->constants.count - 1;
+}
+
+static inline void _ouo_c_emit_byte(
+    _OuoCompiler *c, OuoChunk *chunk, uint8_t byte) {
+  _ouo_chunk_write(chunk, byte, c->line);
+}
+
+static inline void _ouo_c_emit_bytes(
+    _OuoCompiler *c, OuoChunk *chunk, uint8_t byte1, uint8_t byte2) {
+  _ouo_c_emit_byte(c, chunk, byte1);
+  _ouo_c_emit_byte(c, chunk, byte2);
+}
+
+static inline void _ouo_c_emit_constant(
+    _OuoCompiler *c, OuoAst *ast, OuoChunk *chunk, OuoObject *obj) {
+  size_t constant = _ouo_chunk_add_constant(chunk, obj);
+
+  if (constant > UINT8_MAX) {
+    _ouo_c_err(c, ast, OUO_ERR_COMPILE_FAIL,
+        "Maximum amount of constants exceeded (max %d).", UINT8_MAX + 1);
+    return;
+  }
+
+  _ouo_c_emit_bytes(c, chunk, OUO_OP_CONSTANT, (uint8_t)constant);
+}
+
+static inline void _ouo_c_err_bin_op_type(_OuoCompiler *c, OuoAst *ast) {
+  _ouo_c_err(c, ast, OUO_ERR_TYPE,
+      "Operation '%s' does not support '%s' and '%s'.",
+      _ouo_tok_kind_str(ast->bin_op.op),
+      _ouo_type_kind_str(ast->bin_op.left->type),
+      _ouo_type_kind_str(ast->bin_op.right->type));
+}
+
+static inline bool _ouo_ast_bin_op_is_int(OuoAst *ast) {
+  return ast->bin_op.left->type == OUO_TYPE_INT &&
+         ast->bin_op.right->type == OUO_TYPE_INT;
+}
+
+static inline bool _ouo_ast_bin_op_is_float(OuoAst *ast) {
+  return ast->bin_op.left->type == OUO_TYPE_FLOAT &&
+         ast->bin_op.right->type == OUO_TYPE_FLOAT;
+}
+
+static void _ouo_c_ast(_OuoCompiler *c, OuoChunk *chunk, OuoAst *ast) {
+  switch (ast->kind) {
+    // Literals
+    case OUO_AST_LIT_INT: {
+      ast->type = OUO_TYPE_INT;
+      OuoObject obj = {
+          .kind = OUO_OBJ_INT,
+          .v_int = ast->lit_int,
+      };
+      _ouo_c_emit_constant(c, ast, chunk, &obj);
+      break;
+    }
+
+    case OUO_AST_LIT_FLOAT: {
+      ast->type = OUO_TYPE_FLOAT;
+      OuoObject obj = {
+          .kind = OUO_OBJ_FLOAT,
+          .v_float = ast->lit_float,
+      };
+      _ouo_c_emit_constant(c, ast, chunk, &obj);
+      break;
+    }
+
+    // Expressions
+    case OUO_AST_BIN_OP:
+      _ouo_c_ast(c, chunk, ast->bin_op.left);
+      _ouo_c_ast(c, chunk, ast->bin_op.right);
+      switch (ast->bin_op.op) {
+        // Arithmetic
+        case OUO_TOK_PLUS:
+          if (_ouo_ast_bin_op_is_int(ast)) {
+            ast->type = OUO_TYPE_INT;
+            _ouo_c_emit_byte(c, chunk, OUO_OP_INT_ADD);
+          } else if (_ouo_ast_bin_op_is_float(ast)) {
+            ast->type = OUO_TYPE_FLOAT;
+            _ouo_c_emit_byte(c, chunk, OUO_OP_FLOAT_ADD);
+          } else _ouo_c_err_bin_op_type(c, ast);
+          break;
+
+        case OUO_TOK_ASTERISK:
+          if (_ouo_ast_bin_op_is_int(ast)) {
+            ast->type = OUO_TYPE_INT;
+            _ouo_c_emit_byte(c, chunk, OUO_OP_INT_MULT);
+          } else if (_ouo_ast_bin_op_is_float(ast)) {
+            ast->type = OUO_TYPE_FLOAT;
+            _ouo_c_emit_byte(c, chunk, OUO_OP_FLOAT_MULT);
+          } else _ouo_c_err_bin_op_type(c, ast);
+          break;
+
+        default:
+          _ouo_c_err(c, ast, OUO_ERR_COMPILE_FAIL,
+              "Binary operation '%s' is not supported.",
+              _ouo_tok_kind_str(ast->bin_op.op));
+          break;
+      }
+      break;
+  }
+}
+
+OuoCompileResult ouo_compile(OuoAst *ast) {
+  _OuoCompiler c = {0};
+  OuoChunk chunk = {0};
+
+  _ouo_c_ast(&c, &chunk, ast);
+  _ouo_chunk_write(&chunk, OUO_OP_RETURN, 0);
+
+  return (OuoCompileResult){
+      .failed = c.failed,
+      .chunk = chunk,
+      .errors = c.errors,
+  };
 }
 
 void ouo_chunk_free(OuoChunk *chunk) {
@@ -724,8 +901,8 @@ void ouo_chunk_free(OuoChunk *chunk) {
   ouo_da_free(*chunk);
 }
 
-static const char *_ouo_op_code_str(OuoOpCode op) {
-  switch (op) {
+static const char *_ouo_op_code_str(OuoOpCode op_code) {
+  switch (op_code) {
     // Objects
     case OUO_OP_CONSTANT: return "CONSTANT";
     // Arithmetic
@@ -745,7 +922,7 @@ static void _ouo_obj_dump(OuoObject *obj) {
   }
 }
 
-static size_t _ouo_chunk_op_dump(OuoChunk *chunk, ouo_op_t *ip) {
+static size_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
   ptrdiff_t i = ip - chunk->items;
 
   ouo_printdbg("%04ld ", i);
@@ -753,12 +930,12 @@ static size_t _ouo_chunk_op_dump(OuoChunk *chunk, ouo_op_t *ip) {
     ouo_printdbg("   | ");
   else ouo_printdbg("%4zu ", chunk->lines.items[i]);
 
-  OuoOpCode op = (OuoOpCode)*ip;
-  ouo_printdbg("%-16s", _ouo_op_code_str(op));
+  OuoOpCode op_code = (OuoOpCode)*ip;
+  ouo_printdbg("%-16s", _ouo_op_code_str(op_code));
 
-  switch (op) {
+  switch (op_code) {
     case OUO_OP_CONSTANT: {
-      ouo_op_t constant = *(++ip);
+      uint8_t constant = *(++ip);
       ouo_printdbg("%4d ", constant);
       _ouo_obj_dump(&chunk->constants.items[constant]);
       return 1;
@@ -770,7 +947,7 @@ static size_t _ouo_chunk_op_dump(OuoChunk *chunk, ouo_op_t *ip) {
 void ouo_chunk_dump(OuoChunk *chunk, const char *name) {
   ouo_printdbg("%s:\n", name);
 
-  OUO_DA_FOREACH(ouo_op_t, ip, chunk) {
+  OUO_DA_FOREACH(uint8_t, ip, chunk) {
     ip += _ouo_chunk_op_dump(chunk, ip);
     ouo_printdbg("\n");
   }
@@ -782,38 +959,28 @@ void ouo_chunk_dump(OuoChunk *chunk, const char *name) {
 // Virtual machine
 //
 
-typedef struct {
-  OuoChunk *chunk;
-  OuoObject stack[OUO_VM_STACK_MAX];
-  OuoObject *stack_top;
-  OuoObject *stack_max;
-
-  bool failed;
-  OuoError err;
-} _OuoVm;
-
 #define _ouo_vm_err(vm, err_code, fmt, ...) \
   do { \
-    *vm->failed = true; \
-    OuoError err = { \
+    vm->failed = true; \
+    OuoError error = { \
         .code = (err_code), \
         .start = NULL, \
         .len = 0, \
         .msg = {0}, \
     }; \
-    snprintf(err.msg, OUO_ERR_MSG_SIZE, fmt, ##__VA_ARGS__); \
-    *vm->err = err; \
+    snprintf(error.msg, OUO_ERR_MSG_SIZE, fmt, ##__VA_ARGS__); \
+    vm->error = error; \
   } while (0)
 
-static inline void _ouo_vm_init(_OuoVm *vm, OuoChunk *chunk) {
-  vm->chunk = chunk;
+static inline void _ouo_vm_init(OuoVm *vm, OuoChunk *chunk) {
+  vm->chunk = *chunk;
   vm->stack_top = vm->stack;
   vm->stack_max = &vm->stack[OUO_VM_STACK_MAX];
 }
 
-static inline void _ouo_vm_stack_push(_OuoVm *vm, OuoObject obj) {
+static inline void _ouo_vm_stack_push(OuoVm *vm, OuoObject obj) {
   if (vm->stack_top == vm->stack_max) {
-    _ouo_vm_err(&vm, OUO_ERR_RUNTIME, "Maximum stack size exceeded (max %d).",
+    _ouo_vm_err(vm, OUO_ERR_RUNTIME, "Maximum stack size exceeded (max %d).",
         OUO_VM_STACK_MAX);
     return;
   }
@@ -822,7 +989,7 @@ static inline void _ouo_vm_stack_push(_OuoVm *vm, OuoObject obj) {
   vm->stack_top++;
 }
 
-static inline OuoObject _ouo_vm_stack_pop(_OuoVm *vm) {
+static inline OuoObject _ouo_vm_stack_pop(OuoVm *vm) {
   vm->stack_top--;
   return *vm->stack_top;
 }
@@ -839,7 +1006,7 @@ static inline OuoObject _ouo_vm_stack_pop(_OuoVm *vm) {
       .v_float = (v), \
   })
 
-#define _ouo_vm_read_constant(vm, ip) ((vm)->chunk->constants.items[*(++(ip))])
+#define _ouo_vm_read_constant(vm, ip) ((vm)->chunk.constants.items[*(++(ip))])
 
 #define _OUO_VM_BIN_OP(vm, T, OP) \
   do { \
@@ -848,10 +1015,11 @@ static inline OuoObject _ouo_vm_stack_pop(_OuoVm *vm) {
     _ouo_vm_stack_push(vm, _ouo_obj_new_##T(a OP b)); \
   } while (0)
 
-static void _ouo_vm_run(_OuoVm *vm) {
-  OUO_DA_FOREACH(ouo_op_t, ip, vm->chunk) {
+static void _ouo_vm_run(OuoVm *vm) {
+  OUO_DA_FOREACH(uint8_t, ip, &vm->chunk) {
     if (vm->failed) return;
 
+#ifdef OUO_DEBUG
     if (vm->stack_top != vm->stack) {
       for (OuoObject *slot = vm->stack; slot < vm->stack_top; slot++) {
         ouo_printdbg("[");
@@ -861,22 +1029,25 @@ static void _ouo_vm_run(_OuoVm *vm) {
       ouo_printdbg("\n");
     }
 
-    _ouo_chunk_op_dump(vm->chunk, ip);
+    _ouo_chunk_op_dump(&vm->chunk, ip);
     ouo_printdbg("\n");
+#endif
 
-    OuoOpCode op = (OuoOpCode)*ip;
-    switch (op) {
+    OuoOpCode op_code = (OuoOpCode)*ip;
+    switch (op_code) {
       // Objects
       case OUO_OP_CONSTANT: {
         OuoObject constant = _ouo_vm_read_constant(vm, ip);
         _ouo_vm_stack_push(vm, constant);
         break;
       }
+
       // Arithmetic
       case OUO_OP_INT_ADD: _OUO_VM_BIN_OP(vm, int, +); break;
       case OUO_OP_FLOAT_ADD: _OUO_VM_BIN_OP(vm, float, +); break;
       case OUO_OP_INT_MULT: _OUO_VM_BIN_OP(vm, int, *); break;
       case OUO_OP_FLOAT_MULT: _OUO_VM_BIN_OP(vm, float, *); break;
+
       // Control flow
       case OUO_OP_RETURN: {
         OuoObject obj = _ouo_vm_stack_pop(vm);
@@ -888,16 +1059,9 @@ static void _ouo_vm_run(_OuoVm *vm) {
   }
 }
 
-OuoInterpretResult ouo_interpret(OuoChunk *chunk) {
-  _OuoVm vm = {0};
-  _ouo_vm_init(&vm, chunk);
-
-  _ouo_vm_run(&vm);
-
-  return (OuoInterpretResult){
-      .failed = vm.failed,
-      .err = vm.err,
-  };
+void ouo_interpret(OuoVm *vm, OuoChunk *chunk) {
+  _ouo_vm_init(vm, chunk);
+  _ouo_vm_run(vm);
 }
 
 #endif // OUO_IMPLEMENTATION

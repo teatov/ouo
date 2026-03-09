@@ -7,7 +7,7 @@ vpath %.c $(SRC_DIR)
 vpath %.h $(SRC_DIR)
 
 CC = clang
-CFLAGS_dev = -g3 -Og
+CFLAGS_dev = -g3
 CFLAGS_prod = -O3 -Werror
 CFLAGS += $(CFLAGS_$(ENV)) -std=c99 \
 	-Wall -Wextra -Wconversion -Wmissing-prototypes

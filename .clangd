@@ -1,2 +1,2 @@
 CompileFlags:
-  Add: [-DOUO_IMPLEMENTATION, -Wno-macro-redefined]
+  Add: [-DOUO_IMPLEMENTATION, -DOUO_DEBUG, -Wno-macro-redefined]
