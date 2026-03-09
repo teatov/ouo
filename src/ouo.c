@@ -2,13 +2,14 @@
 /// Standalone ouo interpreter
 ///
 
-#define OUO_IMPLEMENTATION
-#include "ouo.h"
-
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define OUO_IMPLEMENTATION
+#include "ouo.h"
 
 static void run(const char *src, const char *path) {
   OuoParseResult parse_res = ouo_parse(src);
@@ -94,6 +95,31 @@ static void run_file(const char *path) {
 }
 
 int main(int argc, const char **argv) {
+  OuoChunk chunk = {0};
+
+  OuoObject obj = {.kind = OUO_OBJ_FLOAT, .v_float = 5.5};
+  size_t constant = _ouo_chunk_add_constant(&chunk, obj);
+  _ouo_chunk_write(&chunk, OUO_OP_CONSTANT, 1);
+  _ouo_chunk_write(&chunk, (ouo_op_t)constant, 1);
+
+  OuoObject obj2 = {.kind = OUO_OBJ_FLOAT, .v_float = 6.0};
+  size_t constant2 = _ouo_chunk_add_constant(&chunk, obj2);
+  _ouo_chunk_write(&chunk, OUO_OP_CONSTANT, 1);
+  _ouo_chunk_write(&chunk, (ouo_op_t)constant2, 1);
+
+  _ouo_chunk_write(&chunk, OUO_OP_FLOAT_MULT, 1);
+  _ouo_chunk_write(&chunk, OUO_OP_RETURN, 2);
+
+  ouo_chunk_dump(&chunk, "main");
+  ouo_printdbg("\n");
+  OuoInterpretResult interp_res = ouo_interpret(&chunk);
+
+  if (interp_res.failed) ouo_err_msg_print(&interp_res.err, NULL, NULL);
+
+  ouo_chunk_free(&chunk);
+
+  return 0;
+
   ouo_assert(argc <= 2, OUO_ERR_INCORRECT_USAGE, "Usage: ouo [PATH]");
 
   if (argc == 1) start_repl();
