@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 //
 // Helper macros
@@ -114,8 +115,12 @@ typedef enum {
 
 typedef struct OuoError {
   OuoErrorCode code;
-  const char *start;
+
   size_t len;
+  size_t line;
+  size_t col;
+  const char *line_start;
+
   char msg[OUO_ERR_MSG_SIZE];
 } OuoError;
 
@@ -176,6 +181,8 @@ typedef struct {
   const char *start;
   size_t len;
   size_t line;
+  size_t col;
+  const char *line_start;
 } OuoToken;
 
 //
@@ -284,8 +291,6 @@ void ouo_chunk_dump(OuoChunk *chunk, const char *name);
 // Virtual machine
 //
 
-#define OUO_VM_STACK_MAX 256
-
 typedef enum {
   // Pass by value
   OUO_OBJ_INT,
@@ -322,6 +327,15 @@ OuoInterpretResult ouo_interpret(OuoChunk *chunk);
 // Error handling
 //
 
+#define _OUO_ER "\e[0m"
+#define _OUO_EB "\e[1m"
+#define _OUO_EBR "\e[0;1m"
+#define _OUO_ED "\e[2m"
+#define _OUO_EBRED "\e[1;31m"
+
+#define _ouo_err_sprintf(err, fmt, ...) \
+  snprintf((err).msg, OUO_ERR_MSG_SIZE, fmt, ##__VA_ARGS__)
+
 static const char *_ouo_err_code_str(OuoErrorCode err_code) {
   switch (err_code) {
     case OUO_OK: return "OK :)";
@@ -338,33 +352,41 @@ static const char *_ouo_err_code_str(OuoErrorCode err_code) {
 }
 
 void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
-  size_t line = 0, col = 0, line_len = 0;
-  const char *line_start = NULL, *line_end = NULL;
+  const char *line_start = err->line_start;
+  size_t line_len = 0;
 
-  if (err->start != NULL && src != NULL) {
-    line_start = src;
-    for (const char *p = src; *p != '\0' && p < err->start; p++)
-      if (*p == '\n') {
-        line++;
-        col = 0;
-        line_start = p + 1;
-      } else col++;
+  if (line_start == NULL && err->line != 0 && src != NULL) {
+    size_t line = 1;
+    for (const char *p = src; *p != '\0'; p++) {
+      if (line == err->line) {
+        line_start = p;
+        break;
+      }
+      if (*p == '\n') line++;
+    }
+  }
 
-    line_end = line_start;
+  if (line_start != NULL && src != NULL) {
+    const char *line_end = line_start;
     while (*line_end != '\0' && *line_end != '\n') line_end++;
     line_len = (size_t)(line_end - line_start);
   }
 
+  ouo_printerr(_OUO_ED);
   if (path != NULL) ouo_printerr("%s:", path);
-  ouo_printerr("%zu:%zu: %s: %s", line + 1, col + 1,
+  ouo_printerr("%zu:", err->line);
+  if (err->col != 0) ouo_printerr("%zu:", err->col);
+  ouo_printerr(_OUO_EBR _OUO_EBRED " %s: " _OUO_EBR "%s" _OUO_ER,
       _ouo_err_code_str(err->code), err->msg);
 
-  if (line_start != NULL) {
-    ouo_printerr("\n%.*s", (int)line_len, line_start);
+  if (line_len != 0) {
+    ouo_printerr(_OUO_ED "\n%5zu | " _OUO_ER "%.*s", err->line, (int)line_len,
+        line_start);
     if (err->len > 0) {
-      ouo_printerr("\n");
-      for (size_t i = 0; i < col; i++) ouo_printerr(" ");
+      ouo_printerr(_OUO_ED "\n      | " _OUO_ER _OUO_EB);
+      for (size_t i = 0; i < err->col - 1; i++) ouo_printerr(" ");
       for (size_t i = 0; i < err->len; i++) ouo_printerr("^");
+      ouo_printerr(_OUO_ER);
     }
   }
 
@@ -382,6 +404,7 @@ static const char *_ouo_type_kind_str(OuoTypeKind kind) {
     case OUO_TYPE_INT: return "int";
     case OUO_TYPE_FLOAT: return "float";
   }
+  return "";
 }
 
 //
@@ -391,13 +414,19 @@ static const char *_ouo_type_kind_str(OuoTypeKind kind) {
 typedef struct {
   const char *start;
   const char *current;
+
   size_t line;
+  size_t col;
+  const char *line_start;
 } _OuoLexer;
 
 static inline void _ouo_l_init(_OuoLexer *l, const char *src) {
   l->start = src;
   l->current = src;
+
   l->line = 1;
+  l->col = 1;
+  l->line_start = src;
 }
 
 static inline bool _ouo_l_is_eof(_OuoLexer *l) { return *l->current == '\0'; }
@@ -405,6 +434,7 @@ static inline bool _ouo_l_is_eof(_OuoLexer *l) { return *l->current == '\0'; }
 static inline bool _ouo_l_is_digit(char c) { return c >= '0' && c <= '9'; }
 
 static inline char _ouo_l_advance(_OuoLexer *l) {
+  l->col++;
   l->current++;
   return l->current[-1];
 }
@@ -419,18 +449,26 @@ static inline char _ouo_l_peek_next(_OuoLexer *l) {
 static inline void _ouo_l_skip_whitespace(_OuoLexer *l) {
   for (;;) {
     char c = _ouo_l_peek(l);
-    if (c == '\n') l->line++;
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') _ouo_l_advance(l);
-    else return;
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      _ouo_l_advance(l);
+      if (c == '\n') {
+        l->line++;
+        l->col = 1;
+        l->line_start = l->current;
+      }
+    } else return;
   }
 }
 
 static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
+  size_t len = (size_t)(l->current - l->start);
   return (OuoToken){
       .kind = kind,
       .start = l->start,
-      .len = (size_t)(l->current - l->start),
+      .len = len,
       .line = l->line,
+      .col = l->col - len,
+      .line_start = l->line_start,
   };
 }
 
@@ -523,11 +561,13 @@ typedef struct _OuoParseRule {
     p->failed = true; \
     OuoError err = { \
         .code = (err_code), \
-        .start = (tok).start, \
         .len = (tok).len, \
+        .line = (tok).line, \
+        .col = (tok).col, \
+        .line_start = (tok).line_start, \
         .msg = {0}, \
     }; \
-    snprintf(err.msg, OUO_ERR_MSG_SIZE, fmt, ##__VA_ARGS__); \
+    _ouo_err_sprintf(err, fmt, ##__VA_ARGS__); \
     ouo_da_append(&p->errors, err); \
   } while (0)
 
@@ -763,11 +803,13 @@ typedef struct {
       c->panic_mode = true; \
       OuoError err = { \
           .code = (err_code), \
-          .start = (ast)->tok.start, \
           .len = (ast)->tok.len, \
+          .line = (ast)->tok.line, \
+          .col = (ast)->tok.col, \
+          .line_start = (ast)->tok.line_start, \
           .msg = {0}, \
       }; \
-      snprintf(err.msg, OUO_ERR_MSG_SIZE, fmt, ##__VA_ARGS__); \
+      _ouo_err_sprintf(err, fmt, ##__VA_ARGS__); \
       ouo_da_append(&c->errors, err); \
     } \
   } while (0)
@@ -867,7 +909,7 @@ static inline void _ouo_c_emit_bytes(
   _ouo_c_emit_byte(chunk, ast, byte2);
 }
 
-static inline void _ouo_c_emit_constant(
+static void _ouo_c_emit_constant(
     _OuoCompiler *c, OuoChunk *chunk, OuoAst *ast, OuoObject *obj) {
   size_t constant = _ouo_chunk_add_constant(chunk, obj);
 
@@ -982,6 +1024,7 @@ static const char *_ouo_op_code_str(OuoOpCode op_code) {
     // Control flow
     case OUO_OP_RETURN: return "RETURN";
   }
+  return "";
 }
 
 static void _ouo_obj_dump(OuoObject *obj) {
@@ -1031,9 +1074,11 @@ void ouo_chunk_dump(OuoChunk *chunk, const char *name) {
 // Virtual machine
 //
 
+#define OUO_VM_STACK_SIZE 256
+
 typedef struct {
   OuoChunk chunk;
-  OuoObject stack[OUO_VM_STACK_MAX];
+  OuoObject stack[OUO_VM_STACK_SIZE];
   OuoObject *stack_top;
   OuoObject *stack_max;
 
@@ -1041,29 +1086,33 @@ typedef struct {
   OuoError error;
 } _OuoVm;
 
-#define _ouo_vm_err(vm, err_code, fmt, ...) \
+#define _ouo_vm_err(vm, line_num, err_code, fmt, ...) \
   do { \
     vm->failed = true; \
     OuoError error = { \
         .code = (err_code), \
-        .start = NULL, \
-        .len = 0, \
+        .line = (line_num), \
+        .line_start = NULL, \
         .msg = {0}, \
     }; \
-    snprintf(error.msg, OUO_ERR_MSG_SIZE, fmt, ##__VA_ARGS__); \
+    _ouo_err_sprintf(error, fmt, ##__VA_ARGS__); \
     vm->error = error; \
   } while (0)
 
 static inline void _ouo_vm_init(_OuoVm *vm, OuoChunk *chunk) {
   vm->chunk = *chunk;
   vm->stack_top = vm->stack;
-  vm->stack_max = &vm->stack[OUO_VM_STACK_MAX];
+  vm->stack_max = &vm->stack[OUO_VM_STACK_SIZE];
 }
 
-static inline void _ouo_vm_stack_push(_OuoVm *vm, OuoObject obj) {
+static inline size_t _ouo_vm_get_line(_OuoVm *vm, uint8_t *ip) {
+  return vm->chunk.lines.items[ip - vm->chunk.items];
+}
+
+static inline void _ouo_vm_stack_push(_OuoVm *vm, uint8_t *ip, OuoObject obj) {
   if (vm->stack_top == vm->stack_max) {
-    _ouo_vm_err(vm, OUO_ERR_RUNTIME, "Maximum stack size exceeded (max %d).",
-        OUO_VM_STACK_MAX);
+    _ouo_vm_err(vm, _ouo_vm_get_line(vm, ip), OUO_ERR_RUNTIME,
+        "Maximum stack size exceeded (max %d).", OUO_VM_STACK_SIZE);
     return;
   }
 
@@ -1090,11 +1139,11 @@ static inline OuoObject _ouo_vm_stack_pop(_OuoVm *vm) {
 
 #define _ouo_vm_read_constant(vm, ip) ((vm)->chunk.constants.items[*(++(ip))])
 
-#define _OUO_VM_BIN_OP(vm, T, OP) \
+#define _OUO_VM_BIN_OP(vm, ip, T, OP) \
   do { \
     ouo_##T##_t b = _ouo_vm_stack_pop(vm).v_##T; \
     ouo_##T##_t a = _ouo_vm_stack_pop(vm).v_##T; \
-    _ouo_vm_stack_push(vm, _ouo_obj_new_##T(a OP b)); \
+    _ouo_vm_stack_push(vm, ip, _ouo_obj_new_##T(a OP b)); \
   } while (0)
 
 static void _ouo_vm_run(_OuoVm *vm) {
@@ -1120,15 +1169,15 @@ static void _ouo_vm_run(_OuoVm *vm) {
       // Objects
       case OUO_OP_CONSTANT: {
         OuoObject constant = _ouo_vm_read_constant(vm, ip);
-        _ouo_vm_stack_push(vm, constant);
+        _ouo_vm_stack_push(vm, ip, constant);
         break;
       }
 
       // Arithmetic
-      case OUO_OP_INT_ADD: _OUO_VM_BIN_OP(vm, int, +); break;
-      case OUO_OP_FLOAT_ADD: _OUO_VM_BIN_OP(vm, float, +); break;
-      case OUO_OP_INT_MULT: _OUO_VM_BIN_OP(vm, int, *); break;
-      case OUO_OP_FLOAT_MULT: _OUO_VM_BIN_OP(vm, float, *); break;
+      case OUO_OP_INT_ADD: _OUO_VM_BIN_OP(vm, ip, int, +); break;
+      case OUO_OP_FLOAT_ADD: _OUO_VM_BIN_OP(vm, ip, float, +); break;
+      case OUO_OP_INT_MULT: _OUO_VM_BIN_OP(vm, ip, int, *); break;
+      case OUO_OP_FLOAT_MULT: _OUO_VM_BIN_OP(vm, ip, float, *); break;
 
       // Control flow
       case OUO_OP_RETURN: {

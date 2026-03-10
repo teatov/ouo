@@ -17,7 +17,7 @@ MAKEFLAGS += --no-print-directory
 all: $(MAIN)
 
 $(MAIN): ouo.c ouo.h
-	$(CC) $(CFLAGS) $< -o $@
+	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
 	rm -rf $(MAIN)

@@ -8,40 +8,51 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define OUO_DEBUG
+// #define OUO_DEBUG
 #define OUO_IMPLEMENTATION
 #include "ouo.h"
 
-static void run(const char *src, const char *path) {
+static OuoErrorCode run(const char *src, const char *path) {
+  OuoErrorCode err_code = OUO_OK;
+
   OuoParseResult parse_res = ouo_parse(src);
 
   if (parse_res.failed) {
     OUO_DA_FOREACH(OuoError, err, &parse_res.errors) {
       ouo_err_msg_print(err, src, path);
+      err_code = err->code;
     }
     goto parse_defer;
   }
 
   OuoCompileResult compile_res = ouo_compile(parse_res.ast);
 
+parse_defer:
+  ouo_ast_free(parse_res.ast);
+  ouo_da_free(parse_res.errors);
+  if (parse_res.failed) return err_code;
+
   if (compile_res.failed) {
     OUO_DA_FOREACH(OuoError, err, &compile_res.errors) {
       ouo_err_msg_print(err, src, path);
+      err_code = err->code;
     }
     goto compile_defer;
   }
 
   OuoInterpretResult interpret_res = ouo_interpret(&compile_res.chunk);
 
-  if (interpret_res.failed) ouo_err_msg_print(&interpret_res.error, NULL, NULL);
-
 compile_defer:
-  ouo_da_free(compile_res.errors);
   ouo_chunk_free(&compile_res.chunk);
+  ouo_da_free(compile_res.errors);
+  if (compile_res.failed) return err_code;
 
-parse_defer:
-  ouo_da_free(parse_res.errors);
-  ouo_ast_free(parse_res.ast);
+  if (interpret_res.failed) {
+    ouo_err_msg_print(&interpret_res.error, src, path);
+    err_code = interpret_res.error.code;
+  }
+
+  return err_code;
 }
 
 static char *read_line(void) {
@@ -54,7 +65,6 @@ static char *read_line(void) {
   int c;
   while ((c = getchar()) != EOF) {
     ouo_da_append(&buffer, (char)c);
-
     if (c == '\n') break;
   }
 
@@ -67,7 +77,7 @@ static char *read_line(void) {
   return buffer.items;
 }
 
-static void start_repl(void) {
+static OuoErrorCode start_repl(void) {
   for (;;) {
     ouo_print("ouo> ");
     char *line = read_line();
@@ -79,6 +89,8 @@ static void start_repl(void) {
     run(line, NULL);
     ouo_free(line);
   }
+
+  return OUO_OK;
 }
 
 static char *read_file(const char *path) {
@@ -103,17 +115,19 @@ static char *read_file(const char *path) {
   return buffer;
 }
 
-static void run_file(const char *path) {
+static OuoErrorCode run_file(const char *path) {
   char *src = read_file(path);
-  run(src, path);
+  OuoErrorCode err_code = run(src, path);
   ouo_free(src);
+  return err_code;
 }
 
 int main(int argc, const char **argv) {
+  OuoErrorCode err_code = OUO_OK;
+
   ouo_assert(argc <= 2, OUO_ERR_INCORRECT_USAGE, "Usage: ouo [PATH]");
+  if (argc == 1) err_code = start_repl();
+  else if (argc == 2) err_code = run_file(argv[1]);
 
-  if (argc == 1) start_repl();
-  else if (argc == 2) run_file(argv[1]);
-
-  return OUO_OK;
+  return (int)err_code;
 }
