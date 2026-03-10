@@ -8,17 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-// #define OUO_DEBUG
+#define OUO_DEBUG
 #define OUO_IMPLEMENTATION
 #include "ouo.h"
 
-static void run(OuoVm *vm, const char *src, const char *path) {
+static void run(const char *src, const char *path) {
   OuoParseResult parse_res = ouo_parse(src);
-
-#ifdef OUO_DEBUG
-  ouo_ast_dump(parse_res.ast);
-  ouo_printdbg("\n");
-#endif
 
   if (parse_res.failed) {
     OUO_DA_FOREACH(OuoError, err, &parse_res.errors) {
@@ -29,11 +24,6 @@ static void run(OuoVm *vm, const char *src, const char *path) {
 
   OuoCompileResult compile_res = ouo_compile(parse_res.ast);
 
-#ifdef OUO_DEBUG
-  ouo_chunk_dump(&compile_res.chunk, "main");
-  ouo_printdbg("\n");
-#endif
-
   if (compile_res.failed) {
     OUO_DA_FOREACH(OuoError, err, &compile_res.errors) {
       ouo_err_msg_print(err, src, path);
@@ -41,9 +31,9 @@ static void run(OuoVm *vm, const char *src, const char *path) {
     goto compile_defer;
   }
 
-  ouo_interpret(vm, &compile_res.chunk);
+  OuoInterpretResult interpret_res = ouo_interpret(&compile_res.chunk);
 
-  if (vm->failed) ouo_err_msg_print(&vm->error, NULL, NULL);
+  if (interpret_res.failed) ouo_err_msg_print(&interpret_res.error, NULL, NULL);
 
 compile_defer:
   ouo_da_free(compile_res.errors);
@@ -77,7 +67,7 @@ static char *read_line(void) {
   return buffer.items;
 }
 
-static void start_repl(OuoVm *vm) {
+static void start_repl(void) {
   for (;;) {
     ouo_print("ouo> ");
     char *line = read_line();
@@ -86,7 +76,7 @@ static void start_repl(OuoVm *vm) {
       break;
     }
 
-    run(vm, line, NULL);
+    run(line, NULL);
     ouo_free(line);
   }
 }
@@ -113,18 +103,17 @@ static char *read_file(const char *path) {
   return buffer;
 }
 
-static void run_file(OuoVm *vm, const char *path) {
+static void run_file(const char *path) {
   char *src = read_file(path);
-  run(vm, src, path);
+  run(src, path);
   ouo_free(src);
 }
 
 int main(int argc, const char **argv) {
   ouo_assert(argc <= 2, OUO_ERR_INCORRECT_USAGE, "Usage: ouo [PATH]");
 
-  OuoVm vm = {0};
-  if (argc == 1) start_repl(&vm);
-  else if (argc == 2) run_file(&vm, argv[1]);
+  if (argc == 1) start_repl();
+  else if (argc == 2) run_file(argv[1]);
 
   return OUO_OK;
 }

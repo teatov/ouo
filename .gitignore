@@ -2,6 +2,7 @@
 .zed/
 build/
 
+.fuse_hidden*
 compile_commands.json
 ouo
 ouo.exe
