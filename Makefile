@@ -1,4 +1,5 @@
 MAIN = ouo
+LSP = ouols
 # release: ENV=prod
 ENV = dev
 
@@ -19,8 +20,11 @@ all: $(MAIN)
 $(MAIN): ouo.c ouo.h
 	$(CC) $(CFLAGS) -o $@ $<
 
+$(LSP): ouols.c ouo.h
+	$(CC) $(CFLAGS) -o $@ $<
+
 clean:
-	rm -rf $(MAIN)
+	rm -rf $(MAIN) $(LSP)
 
 re:
 	$(MAKE) clean

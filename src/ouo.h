@@ -62,6 +62,14 @@
     (da)->count++; \
   } while (0)
 
+#define ouo_da_append_many(da, new_items, new_items_count) \
+  do { \
+    ouo_da_reserve((da), (da)->count + (new_items_count)); \
+    ouo_memcpy((da)->items + (da)->count, (new_items), \
+        (new_items_count) * sizeof(*(da)->items)); \
+    (da)->count += (new_items_count); \
+  } while (0)
+
 #define ouo_da_free(da) \
   do { \
     ouo_free((da).items); \
@@ -79,6 +87,10 @@
 
 #ifndef ouo_realloc
   #define ouo_realloc(...) realloc(__VA_ARGS__)
+#endif
+
+#ifndef ouo_memcpy
+  #define ouo_memcpy(...) memcpy(__VA_ARGS__)
 #endif
 
 #ifndef ouo_free
@@ -166,8 +178,8 @@ typedef enum {
 //
 
 typedef enum {
-  OUO_TOK_EOF,
   OUO_TOK_ILLEGAL,
+  OUO_TOK_EOF,
   // Literals
   OUO_TOK_LIT_INT,
   OUO_TOK_LIT_FLOAT,
@@ -413,7 +425,7 @@ static const char *_ouo_type_kind_str(OuoTypeKind kind) {
 
 typedef struct {
   const char *start;
-  const char *current;
+  const char *curr;
 
   size_t line;
   size_t col;
@@ -422,28 +434,28 @@ typedef struct {
 
 static inline void _ouo_l_init(_OuoLexer *l, const char *src) {
   l->start = src;
-  l->current = src;
+  l->curr = src;
 
   l->line = 1;
   l->col = 1;
   l->line_start = src;
 }
 
-static inline bool _ouo_l_is_eof(_OuoLexer *l) { return *l->current == '\0'; }
+static inline bool _ouo_l_is_eof(_OuoLexer *l) { return *l->curr == '\0'; }
 
 static inline bool _ouo_l_is_digit(char c) { return c >= '0' && c <= '9'; }
 
 static inline char _ouo_l_advance(_OuoLexer *l) {
   l->col++;
-  l->current++;
-  return l->current[-1];
+  l->curr++;
+  return l->curr[-1];
 }
 
-static inline char _ouo_l_peek(_OuoLexer *l) { return *l->current; }
+static inline char _ouo_l_peek(_OuoLexer *l) { return *l->curr; }
 
 static inline char _ouo_l_peek_next(_OuoLexer *l) {
   if (_ouo_l_is_eof(l)) return '\0';
-  return l->current[1];
+  return l->curr[1];
 }
 
 static inline void _ouo_l_skip_whitespace(_OuoLexer *l) {
@@ -454,14 +466,14 @@ static inline void _ouo_l_skip_whitespace(_OuoLexer *l) {
       if (c == '\n') {
         l->line++;
         l->col = 1;
-        l->line_start = l->current;
+        l->line_start = l->curr;
       }
     } else return;
   }
 }
 
 static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
-  size_t len = (size_t)(l->current - l->start);
+  size_t len = (size_t)(l->curr - l->start);
   return (OuoToken){
       .kind = kind,
       .start = l->start,
@@ -489,7 +501,7 @@ static OuoToken _ouo_l_read_number(_OuoLexer *l) {
 
 static OuoToken _ouo_l_next_token(_OuoLexer *l) {
   _ouo_l_skip_whitespace(l);
-  l->start = (l->current);
+  l->start = l->curr;
 
   if (_ouo_l_is_eof(l)) return _ouo_l_tok_new(l, OUO_TOK_EOF);
 
@@ -509,8 +521,8 @@ static OuoToken _ouo_l_next_token(_OuoLexer *l) {
 
 static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
   switch (kind) {
-    case OUO_TOK_EOF: return "EOF";
     case OUO_TOK_ILLEGAL: return "ILLEGAL";
+    case OUO_TOK_EOF: return "EOF";
     // Literals
     case OUO_TOK_LIT_INT: return "LIT_INT";
     case OUO_TOK_LIT_FLOAT: return "LIT_FLOAT";
@@ -558,7 +570,7 @@ typedef struct _OuoParseRule {
 
 #define _ouo_p_err(p, tok, err_code, fmt, ...) \
   do { \
-    p->failed = true; \
+    (p)->failed = true; \
     OuoError err = { \
         .code = (err_code), \
         .len = (tok).len, \
@@ -568,7 +580,7 @@ typedef struct _OuoParseRule {
         .msg = {0}, \
     }; \
     _ouo_err_sprintf(err, fmt, ##__VA_ARGS__); \
-    ouo_da_append(&p->errors, err); \
+    ouo_da_append(&(p)->errors, err); \
   } while (0)
 
 static inline void _ouo_p_advance(_OuoParser *p) {
@@ -798,9 +810,9 @@ typedef struct {
 
 #define _ouo_c_err(c, ast, err_code, fmt, ...) \
   do { \
-    if (!c->panic_mode) { \
-      c->failed = true; \
-      c->panic_mode = true; \
+    if (!(c)->panic_mode) { \
+      (c)->failed = true; \
+      (c)->panic_mode = true; \
       OuoError err = { \
           .code = (err_code), \
           .len = (ast)->tok.len, \
@@ -810,7 +822,7 @@ typedef struct {
           .msg = {0}, \
       }; \
       _ouo_err_sprintf(err, fmt, ##__VA_ARGS__); \
-      ouo_da_append(&c->errors, err); \
+      ouo_da_append(&(c)->errors, err); \
     } \
   } while (0)
 
@@ -1088,7 +1100,7 @@ typedef struct {
 
 #define _ouo_vm_err(vm, line_num, err_code, fmt, ...) \
   do { \
-    vm->failed = true; \
+    (vm)->failed = true; \
     OuoError error = { \
         .code = (err_code), \
         .line = (line_num), \
@@ -1096,7 +1108,7 @@ typedef struct {
         .msg = {0}, \
     }; \
     _ouo_err_sprintf(error, fmt, ##__VA_ARGS__); \
-    vm->error = error; \
+    (vm)->error = error; \
   } while (0)
 
 static inline void _ouo_vm_init(_OuoVm *vm, OuoChunk *chunk) {
