@@ -15,7 +15,7 @@ CFLAGS += $(CFLAGS_$(ENV)) -std=c99 \
 
 MAKEFLAGS += --no-print-directory
 
-all: $(MAIN)
+all: $(MAIN) $(LSP)
 
 $(MAIN): ouo.c ouo.h
 	$(CC) $(CFLAGS) -o $@ $<

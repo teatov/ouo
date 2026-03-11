@@ -42,7 +42,9 @@
 
 #define ouo_arr_len(arr) (sizeof(arr) / sizeof((arr)[0]))
 
-#define OUO_DA_INIT_CAPACITY 8
+#ifndef OUO_DA_INIT_CAPACITY
+  #define OUO_DA_INIT_CAPACITY 8
+#endif
 
 #define ouo_da_reserve(da, new_capacity) \
   do { \
@@ -99,9 +101,17 @@
 
 // Printing
 
-#define ouo_print(...) printf(__VA_ARGS__)
-#define ouo_printerr(...) fprintf(stderr, ##__VA_ARGS__)
-#define ouo_printdbg(...) fprintf(stderr, ##__VA_ARGS__)
+#ifndef ouo_print
+  #define ouo_print(...) fprintf(stdout, __VA_ARGS__)
+#endif
+
+#ifndef ouo_printerr
+  #define ouo_printerr(...) fprintf(stderr, __VA_ARGS__)
+#endif
+
+#ifndef ouo_printdbg
+  #define ouo_printdbg(...) fprintf(stderr, __VA_ARGS__)
+#endif
 
 //
 // Error handling
@@ -249,6 +259,8 @@ void ouo_ast_dump(OuoAst *ast);
 // Compilation
 //
 
+#ifndef OUO_NOEMIT
+
 typedef enum {
   // Objects
   OUO_OP_CONSTANT,
@@ -282,6 +294,14 @@ typedef struct {
   } lines;
 } OuoChunk;
 
+#else
+
+typedef struct {
+  int phony;
+} OuoChunk;
+
+#endif // OUO_NOEMIT
+
 /// Owns memory for `chunk.items`, `chunk.constants.items`,
 /// `chunk.lines.items` and `errors.items`.
 typedef struct {
@@ -292,6 +312,8 @@ typedef struct {
 
 /// Caller owns the result's `chunk` and `errors`.
 OuoCompileResult ouo_compile(OuoAst *ast);
+
+#ifndef OUO_NOEMIT
 
 /// Frees bytecode, constants, and lines of the chunk.
 void ouo_chunk_free(OuoChunk *chunk);
@@ -326,6 +348,8 @@ typedef struct {
 } OuoInterpretResult;
 
 OuoInterpretResult ouo_interpret(OuoChunk *chunk);
+
+#endif // OUO_NOEMIT
 
 #endif // OUO_H
 
@@ -546,6 +570,7 @@ typedef struct {
 
   bool failed;
   OuoErrors errors;
+  bool panic_mode;
 
   struct {
     const struct _OuoParseRule *items;
@@ -570,17 +595,20 @@ typedef struct _OuoParseRule {
 
 #define _ouo_p_err(p, tok, err_code, fmt, ...) \
   do { \
-    (p)->failed = true; \
-    OuoError err = { \
-        .code = (err_code), \
-        .len = (tok).len, \
-        .line = (tok).line, \
-        .col = (tok).col, \
-        .line_start = (tok).line_start, \
-        .msg = {0}, \
-    }; \
-    _ouo_err_sprintf(err, fmt, ##__VA_ARGS__); \
-    ouo_da_append(&(p)->errors, err); \
+    if (!(p)->panic_mode) { \
+      (p)->failed = true; \
+      (p)->panic_mode = true; \
+      OuoError err = { \
+          .code = (err_code), \
+          .len = (tok).len == 0 ? 1 : (tok).len, \
+          .line = (tok).line, \
+          .col = (tok).col, \
+          .line_start = (tok).line_start, \
+          .msg = {0}, \
+      }; \
+      _ouo_err_sprintf(err, fmt, ##__VA_ARGS__); \
+      ouo_da_append(&(p)->errors, err); \
+    } \
   } while (0)
 
 static inline void _ouo_p_advance(_OuoParser *p) {
@@ -841,14 +869,6 @@ static void _ouo_c_err_bin_op_unknown(_OuoCompiler *c, OuoAst *ast) {
       _ouo_tok_kind_str(ast->bin_op.op));
 }
 
-static void _ouo_c_err_bin_op_unanalyzed(_OuoCompiler *c, OuoAst *ast) {
-  _ouo_c_err(c, ast, OUO_ERR_COMPILE_FAIL,
-      "Unanalyzed binary operation for '%s %s %s'.",
-      _ouo_type_kind_str(ast->bin_op.left->type),
-      _ouo_tok_kind_str(ast->bin_op.op),
-      _ouo_type_kind_str(ast->bin_op.right->type));
-}
-
 static inline bool _ouo_ast_bin_op_is_int(OuoAst *ast) {
   return ast->bin_op.left->type == OUO_TYPE_INT &&
          ast->bin_op.right->type == OUO_TYPE_INT;
@@ -897,7 +917,17 @@ static bool _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
   return failed;
 }
 
-// Bytecode emission
+#ifndef OUO_NOEMIT
+
+// Bytecode emitting
+
+static void _ouo_c_err_bin_op_unanalyzed(_OuoCompiler *c, OuoAst *ast) {
+  _ouo_c_err(c, ast, OUO_ERR_COMPILE_FAIL,
+      "Unanalyzed binary operation for '%s %s %s'.",
+      _ouo_type_kind_str(ast->bin_op.left->type),
+      _ouo_tok_kind_str(ast->bin_op.op),
+      _ouo_type_kind_str(ast->bin_op.right->type));
+}
 
 static inline void _ouo_chunk_write(
     OuoChunk *chunk, uint8_t byte, size_t line) {
@@ -981,6 +1011,8 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoChunk *chunk, OuoAst *ast) {
   }
 }
 
+#endif // OUO_NOEMIT
+
 static void _ouo_c_ast(_OuoCompiler *c, OuoChunk *chunk, OuoAst *ast) {
   switch (ast->kind) {
     // Literals
@@ -995,7 +1027,10 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoChunk *chunk, OuoAst *ast) {
 
   bool failed = _ouo_c_ast_analyze(c, ast);
   if (failed) return;
+
+#ifndef OUO_NOEMIT
   _ouo_c_ast_emit(c, chunk, ast);
+#endif
 }
 
 OuoCompileResult ouo_compile(OuoAst *ast) {
@@ -1003,13 +1038,16 @@ OuoCompileResult ouo_compile(OuoAst *ast) {
   OuoChunk chunk = {0};
 
   _ouo_c_ast(&c, &chunk, ast);
+
+#ifndef OUO_NOEMIT
   _ouo_chunk_write(&chunk, OUO_OP_RETURN,
       chunk.lines.count > 0 ? chunk.lines.items[chunk.lines.count - 1] : 0);
 
-#ifdef OUO_DEBUG
+  #ifdef OUO_DEBUG
   ouo_chunk_dump(&chunk, "main");
   ouo_printdbg("\n");
-#endif
+  #endif
+#endif // OUO_NOEMIT
 
   return (OuoCompileResult){
       .failed = c.failed,
@@ -1017,6 +1055,8 @@ OuoCompileResult ouo_compile(OuoAst *ast) {
       .errors = c.errors,
   };
 }
+
+#ifndef OUO_NOEMIT
 
 void ouo_chunk_free(OuoChunk *chunk) {
   ouo_da_free(chunk->constants);
@@ -1082,11 +1122,11 @@ void ouo_chunk_dump(OuoChunk *chunk, const char *name) {
   ouo_printdbg("---------------------------------------\n");
 }
 
-//
-// Virtual machine
-//
+  //
+  // Virtual machine
+  //
 
-#define OUO_VM_STACK_SIZE 256
+  #define OUO_VM_STACK_SIZE 256
 
 typedef struct {
   OuoChunk chunk;
@@ -1098,18 +1138,18 @@ typedef struct {
   OuoError error;
 } _OuoVm;
 
-#define _ouo_vm_err(vm, line_num, err_code, fmt, ...) \
-  do { \
-    (vm)->failed = true; \
-    OuoError error = { \
-        .code = (err_code), \
-        .line = (line_num), \
-        .line_start = NULL, \
-        .msg = {0}, \
-    }; \
-    _ouo_err_sprintf(error, fmt, ##__VA_ARGS__); \
-    (vm)->error = error; \
-  } while (0)
+  #define _ouo_vm_err(vm, line_num, err_code, fmt, ...) \
+    do { \
+      (vm)->failed = true; \
+      OuoError error = { \
+          .code = (err_code), \
+          .line = (line_num), \
+          .line_start = NULL, \
+          .msg = {0}, \
+      }; \
+      _ouo_err_sprintf(error, fmt, ##__VA_ARGS__); \
+      (vm)->error = error; \
+    } while (0)
 
 static inline void _ouo_vm_init(_OuoVm *vm, OuoChunk *chunk) {
   vm->chunk = *chunk;
@@ -1137,32 +1177,32 @@ static inline OuoObject _ouo_vm_stack_pop(_OuoVm *vm) {
   return *vm->stack_top;
 }
 
-#define _ouo_obj_new_int(v) \
-  ((OuoObject){ \
-      .kind = OUO_OBJ_INT, \
-      .v_int = (v), \
-  })
+  #define _ouo_obj_new_int(v) \
+    ((OuoObject){ \
+        .kind = OUO_OBJ_INT, \
+        .v_int = (v), \
+    })
 
-#define _ouo_obj_new_float(v) \
-  ((OuoObject){ \
-      .kind = OUO_OBJ_FLOAT, \
-      .v_float = (v), \
-  })
+  #define _ouo_obj_new_float(v) \
+    ((OuoObject){ \
+        .kind = OUO_OBJ_FLOAT, \
+        .v_float = (v), \
+    })
 
-#define _ouo_vm_read_constant(vm, ip) ((vm)->chunk.constants.items[*(++(ip))])
+  #define _ouo_vm_read_constant(vm, ip) ((vm)->chunk.constants.items[*(++(ip))])
 
-#define _OUO_VM_BIN_OP(vm, ip, T, OP) \
-  do { \
-    ouo_##T##_t b = _ouo_vm_stack_pop(vm).v_##T; \
-    ouo_##T##_t a = _ouo_vm_stack_pop(vm).v_##T; \
-    _ouo_vm_stack_push(vm, ip, _ouo_obj_new_##T(a OP b)); \
-  } while (0)
+  #define _OUO_VM_BIN_OP(vm, ip, T, OP) \
+    do { \
+      ouo_##T##_t b = _ouo_vm_stack_pop(vm).v_##T; \
+      ouo_##T##_t a = _ouo_vm_stack_pop(vm).v_##T; \
+      _ouo_vm_stack_push(vm, ip, _ouo_obj_new_##T(a OP b)); \
+    } while (0)
 
 static void _ouo_vm_run(_OuoVm *vm) {
   OUO_DA_FOREACH(uint8_t, ip, &vm->chunk) {
     if (vm->failed) return;
 
-#ifdef OUO_DEBUG
+  #ifdef OUO_DEBUG
     if (vm->stack_top != vm->stack) {
       for (OuoObject *slot = vm->stack; slot < vm->stack_top; slot++) {
         ouo_printdbg("[");
@@ -1174,7 +1214,7 @@ static void _ouo_vm_run(_OuoVm *vm) {
 
     _ouo_chunk_op_dump(&vm->chunk, ip);
     ouo_printdbg("\n");
-#endif
+  #endif
 
     OuoOpCode op_code = (OuoOpCode)*ip;
     switch (op_code) {
@@ -1213,5 +1253,7 @@ OuoInterpretResult ouo_interpret(OuoChunk *chunk) {
       .error = vm.error,
   };
 }
+
+#endif // OUO_NOEMIT
 
 #endif // OUO_IMPLEMENTATION

@@ -1,10 +1,11 @@
 .cache/
 .zed/
 build/
-test/*.json
+test/*.jsonc
 test/*.jsonrpc
 
 *.exe
+*.log
 .fuse_hidden*
 compile_commands.json
 ouo
