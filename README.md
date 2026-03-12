@@ -12,6 +12,7 @@ languages, and myself.
 ### Milestones
 
 - [ ] Make it good enough to solve Advent of Code.
+- [ ] Implement everything from the [draft](DRAFT.md).
 
 ## Attributions
 
