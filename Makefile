@@ -1,15 +1,15 @@
 MAIN = ouo
 LSP = ouols
-# release: ENV=prod
-ENV = dev
+# release: ENV=release
+ENV = debug
 
 SRC_DIR = src
 vpath %.c $(SRC_DIR)
 vpath %.h $(SRC_DIR)
 
 CC = clang
-CFLAGS_dev = -g3
-CFLAGS_prod = -O3 -Werror
+CFLAGS_debug = -g3
+CFLAGS_release = -O3 -Werror
 CFLAGS += $(CFLAGS_$(ENV)) -std=c99 \
 	-Wall -Wextra -Wconversion -Wmissing-prototypes
 

@@ -1,8 +1,7 @@
 .cache/
 .zed/
 build/
-test/*.jsonc
-test/*.jsonrpc
+test/test.ouo
 
 *.exe
 *.log

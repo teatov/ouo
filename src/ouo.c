@@ -62,7 +62,7 @@ static char *read_line(void) {
     size_t capacity;
   } buffer = {0};
 
-  int c;
+  int c = '\0';
   while ((c = getchar()) != EOF) {
     ouo_da_append(&buffer, (char)c);
     if (c == '\n') break;
@@ -96,18 +96,23 @@ static OuoErrorCode start_repl(void) {
 static char *read_file(const char *path) {
   errno = 0;
   FILE *file = fopen(path, "rb");
-  ouo_assert(
-      file != NULL, OUO_ERR_FILE_NOT_READ, "%s: %s.", path, strerror(errno));
+  ouo_assert(file != NULL, OUO_ERR_READ, "%s: %s.", path, strerror(errno));
 
-  fseek(file, 0L, SEEK_END);
-  size_t file_size = (size_t)ftell(file);
-  rewind(file);
+  int seek_res = fseek(file, 0, SEEK_END);
+  ouo_assert(seek_res == 0, OUO_ERR_READ, "%s: %s.", path, strerror(errno));
 
-  char *buffer = (char *)ouo_alloc(file_size + 1);
+  long file_pos = ftell(file);
+  ouo_assert(file_pos >= 0, OUO_ERR_READ, "%s: %s.", path, strerror(errno));
+
+  seek_res = fseek(file, 0, 0);
+  ouo_assert(seek_res == 0, OUO_ERR_READ, "%s: %s.", path, strerror(errno));
+
+  size_t file_size = (size_t)file_pos;
+  char *buffer = (char *)ouo_malloc(file_size + 1);
   ouo_assert_nomem(buffer);
 
   size_t bytes_read = fread(buffer, sizeof(char), file_size, file);
-  ouo_assert(bytes_read == file_size, OUO_ERR_FILE_NOT_READ, "%s: %s.", path,
+  ouo_assert(bytes_read == file_size, OUO_ERR_READ, "%s: %s.", path,
       strerror(errno));
 
   buffer[bytes_read] = '\0';
@@ -125,7 +130,7 @@ static OuoErrorCode run_file(const char *path) {
 int main(int argc, const char **argv) {
   OuoErrorCode err_code = OUO_OK;
 
-  ouo_assert(argc <= 2, OUO_ERR_INCORRECT_USAGE, "Usage: ouo [PATH]");
+  ouo_assert(argc <= 2, OUO_ERR_USAGE, "Usage: ouo [PATH]");
   if (argc == 1) err_code = start_repl();
   else if (argc == 2) err_code = run_file(argv[1]);
 

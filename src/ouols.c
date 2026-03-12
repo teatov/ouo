@@ -73,9 +73,9 @@ static const char *json_tok_str(JsonToken tok) {
   return "";
 }
 
-///
-/// JSON parsing
-///
+//
+// JSON parsing
+//
 
 typedef struct {
   const char *start;
@@ -93,7 +93,8 @@ static inline JsonString json_str_new(const char *str) {
 }
 
 static inline bool json_strcmp(JsonString *json_str, const char *str) {
-  return strncmp(json_str->start, str, json_str->len) == 0;
+  return json_str->start != NULL &&
+         strncmp(json_str->start, str, json_str->len) == 0;
 }
 
 static void json_str_unescaped(JsonStringOwned *owned, JsonString *s) {
@@ -112,6 +113,10 @@ static void json_str_unescaped(JsonStringOwned *owned, JsonString *s) {
       case 'n': ouo_da_append(owned, '\n'); break;
       case 'r': ouo_da_append(owned, '\r'); break;
       case 't': ouo_da_append(owned, '\t'); break;
+      default:
+        ouo_da_append(owned, '\\');
+        ouo_da_append(owned, *c);
+        break;
     }
   }
   ouo_da_append(owned, '\0');
@@ -218,13 +223,11 @@ static bool _jp_get(JsonParser *jp) {
     jp->string.len = 0;
     while (!_jp_is_eof(jp)) {
       char c = _jp_advance(jp);
-      switch (c) {
-        case '"': {
-          jp->tok = JSON_STRING;
-          return true;
-        }
-        default: jp->string.len++; break;
+      if (c == '"') {
+        jp->tok = JSON_STRING;
+        return true;
       }
+      jp->string.len++;
     }
     _jp_err(jp, "Unterminated string.");
     return false;
@@ -333,9 +336,9 @@ static inline bool jp_end(JsonParser *jp) {
   return true;
 }
 
-///
-/// JSON serializing
-///
+//
+// JSON serializing
+//
 
 typedef enum {
   JSON_SCOPE_OBJECT,
@@ -379,7 +382,10 @@ static inline void _js_scope_push(JsonSerializer *js, JsonScopeKind kind) {
 }
 
 static inline void _js_scope_pop(JsonSerializer *js) {
-  if (js->scopes.count == 0) _js_err(js, "Trying to pop empty scope stack.");
+  if (js->scopes.count == 0) {
+    _js_err(js, "Trying to pop empty scope stack.");
+    return;
+  }
   js->scopes.count--;
 }
 
@@ -407,11 +413,10 @@ static inline void _js_element_end(JsonSerializer *js) {
   scope->key = false;
 }
 
-static inline bool js_object_begin(JsonSerializer *js) {
+static inline void js_object_begin(JsonSerializer *js) {
   _js_element_begin(js);
   js_raw(js, "{");
   _js_scope_push(js, JSON_SCOPE_OBJECT);
-  return true;
 }
 
 static inline void js_object_end(JsonSerializer *js) {
@@ -423,18 +428,19 @@ static inline void js_object_end(JsonSerializer *js) {
 static inline void js_object_member(JsonSerializer *js, const char *key) {
   _js_element_begin(js);
   JsonScope *scope = _js_current_scope(js);
-  if (scope == NULL || scope->kind != JSON_SCOPE_OBJECT || scope->key)
-    _js_err(js, "Trying to pop empty scope stack.");
+  if (scope == NULL || scope->kind != JSON_SCOPE_OBJECT || scope->key) {
+    _js_err(js, "Not in an object scope.");
+    return;
+  }
   js_str_escaped(js, key, strlen(key));
   js_raw(js, ":");
   scope->key = true;
 }
 
-static inline bool js_array_begin(JsonSerializer *js) {
+static inline void js_array_begin(JsonSerializer *js) {
   _js_element_begin(js);
   js_raw(js, "[");
   _js_scope_push(js, JSON_SCOPE_ARRAY);
-  return true;
 }
 
 static inline void js_array_end(JsonSerializer *js) {
@@ -476,9 +482,9 @@ static inline void js_null(JsonSerializer *js) {
   _js_element_end(js);
 }
 
-///
-/// Language server
-///
+//
+// Language server protocol
+//
 
 typedef struct {
   long id;
@@ -489,115 +495,125 @@ typedef struct {
   bool initialized;
   bool shutdown;
   bool exit;
+
+  JsonParser *jp;
+  JsonSerializer *js;
 } OuoLs;
 
-static inline void _ls_init(OuoLs *ls) {
+static inline void _ls_init(OuoLs *ls, JsonParser *jp, JsonSerializer *js) {
   ls->method = (JsonString){.start = NULL};
 
   ls->respond = false;
   ls->has_params = false;
+
+  ls->jp = jp;
+  ls->js = js;
 }
 
-static inline void _ls_begin(OuoLs *_, JsonSerializer *js) {
+static inline void _ls_begin(OuoLs *ls) {
   ouo_printdbg("\n// Send:\n");
-  if (js_object_begin(js)) {
-    js_object_member(js, "jsonrpc");
-    js_string_raw(js, "2.0");
+  js_object_begin(ls->js);
+  {
+    js_object_member(ls->js, "jsonrpc");
+    js_string_raw(ls->js, "2.0");
   }
 }
 
-static inline void _ls_response_begin(OuoLs *ls, JsonSerializer *js) {
-  _ls_begin(ls, js);
-  js_object_member(js, "id");
-  js_integer(js, ls->id);
-  js_object_member(js, "result");
+static inline void _ls_response_begin(OuoLs *ls) {
+  _ls_begin(ls);
+  js_object_member(ls->js, "id");
+  js_integer(ls->js, ls->id);
+  js_object_member(ls->js, "result");
 }
 
-static inline void _ls_notification_begin(
-    OuoLs *ls, JsonSerializer *js, const char *method) {
-  _ls_begin(ls, js);
-  js_object_member(js, "method");
-  js_string_raw(js, method);
-  js_object_member(js, "params");
+static inline void _ls_notification_begin(OuoLs *ls, const char *method) {
+  _ls_begin(ls);
+  js_object_member(ls->js, "method");
+  js_string_raw(ls->js, method);
+  js_object_member(ls->js, "params");
 }
 
-static inline void _ls_end(OuoLs *_, JsonSerializer *js) {
-  js_object_end(js);
-  js_raw(js, "\0");
+static inline void _ls_end(OuoLs *ls) {
+  js_object_end(ls->js);
+  js_raw(ls->js, "\0");
 
-  ouo_print("Content-Length: %zu\r\n\r\n%.*s\r\n", js->count, (int)js->count,
-      js->items);
+  ouo_print("Content-Length: %zu\r\n\r\n%.*s\r\n", ls->js->count,
+      (int)ls->js->count, ls->js->items);
 
   fflush(stdout);
-  ouo_da_free(js->scopes);
-  ouo_da_free(*js);
+  ouo_da_free(ls->js->scopes);
+  ouo_da_free(*ls->js);
   ouo_printdbg("// Flushed!\n");
 }
 
-static void _ls_diagnostic(OuoLs *_, JsonSerializer *js, OuoError *err) {
+static void _ls_diagnostic(OuoLs *ls, OuoError *err) {
   long line = (long)err->line - 1;
   long col = (long)err->col - 1;
 
-  if (js_object_begin(js)) {
-    js_object_member(js, "code");
-    js_string_raw(js, _ouo_err_code_str(err->code));
+  js_object_begin(ls->js);
+  {
+    js_object_member(ls->js, "code");
+    js_string_raw(ls->js, _ouo_err_code_str(err->code));
 
-    js_object_member(js, "message");
-    js_string_raw(js, err->msg);
+    js_object_member(ls->js, "message");
+    js_string_raw(ls->js, err->msg);
 
-    js_object_member(js, "range");
-    if (js_object_begin(js)) {
-      js_object_member(js, "start");
-      if (js_object_begin(js)) {
-        js_object_member(js, "line");
-        js_integer(js, line);
+    js_object_member(ls->js, "range");
+    js_object_begin(ls->js);
+    {
+      js_object_member(ls->js, "start");
+      js_object_begin(ls->js);
+      {
+        js_object_member(ls->js, "line");
+        js_integer(ls->js, line);
 
-        js_object_member(js, "character");
-        js_integer(js, col);
+        js_object_member(ls->js, "character");
+        js_integer(ls->js, col);
       }
-      js_object_end(js);
+      js_object_end(ls->js);
 
-      js_object_member(js, "end");
-      if (js_object_begin(js)) {
-        js_object_member(js, "line");
-        js_integer(js, line);
+      js_object_member(ls->js, "end");
+      js_object_begin(ls->js);
+      {
+        js_object_member(ls->js, "line");
+        js_integer(ls->js, line);
 
-        js_object_member(js, "character");
-        js_integer(js, col + (long)err->len);
+        js_object_member(ls->js, "character");
+        js_integer(ls->js, col + (long)err->len);
       }
-      js_object_end(js);
+      js_object_end(ls->js);
     }
-    js_object_end(js);
+    js_object_end(ls->js);
 
-    js_object_member(js, "severity");
-    js_integer(js, 1);
+    js_object_member(ls->js, "severity");
+    js_integer(ls->js, 1);
 
-    js_object_member(js, "source");
-    js_string_raw(js, "ouols");
+    js_object_member(ls->js, "source");
+    js_string_raw(ls->js, "ouols");
   }
-  js_object_end(js);
+  js_object_end(ls->js);
 }
 
-static void _ls_analyze(
-    OuoLs *ls, JsonSerializer *js, JsonStringOwned *src, JsonString *uri) {
-  _ls_notification_begin(ls, js, "textDocument/publishDiagnostics");
+static void _ls_analyze(OuoLs *ls, JsonStringOwned *src, JsonString *uri) {
+  _ls_notification_begin(ls, "textDocument/publishDiagnostics");
 
-  if (js_object_begin(js)) {
-    js_object_member(js, "diagnostics");
-
-    if (js_array_begin(js)) {
+  js_object_begin(ls->js);
+  {
+    js_object_member(ls->js, "diagnostics");
+    js_array_begin(ls->js);
+    {
       OuoParseResult parse_res = ouo_parse(src->items);
 
       if (parse_res.failed) {
         OUO_DA_FOREACH(OuoError, err, &parse_res.errors) {
-          _ls_diagnostic(ls, js, err);
+          _ls_diagnostic(ls, err);
         }
       } else {
         OuoCompileResult compile_res = ouo_compile(parse_res.ast);
 
         if (compile_res.failed) {
           OUO_DA_FOREACH(OuoError, err, &compile_res.errors) {
-            _ls_diagnostic(ls, js, err);
+            _ls_diagnostic(ls, err);
           }
         }
 
@@ -607,87 +623,89 @@ static void _ls_analyze(
       ouo_ast_free(parse_res.ast);
       ouo_da_free(parse_res.errors);
     }
-    js_array_end(js);
+    js_array_end(ls->js);
 
-    js_object_member(js, "uri");
-    js_string(js, uri);
+    js_object_member(ls->js, "uri");
+    if (uri->start != NULL) js_string(ls->js, uri);
+    else js_string_raw(ls->js, "");
   }
-  js_object_end(js);
-  _ls_end(ls, js);
+  js_object_end(ls->js);
+  _ls_end(ls);
 }
 
-static bool _ls_handle_initialize(
-    OuoLs *ls, JsonParser *jp, JsonSerializer *js) {
-  while (jp_object_member(jp)) {
-    if (jp_strcmp(jp, "processId")) {
-      if (!jp_number(jp)) return false;
-    } else if (!jp_skip(jp)) return false;
+static bool _ls_initialize(OuoLs *ls) {
+  while (jp_object_member(ls->jp)) {
+    if (jp_strcmp(ls->jp, "processId")) {
+      if (!jp_number(ls->jp)) return false;
+    } else if (!jp_skip(ls->jp)) return false;
   }
 
-  _ls_response_begin(ls, js);
+  _ls_response_begin(ls);
 
-  if (js_object_begin(js)) {
-    js_object_member(js, "capabilities");
-    if (js_object_begin(js)) {
-      js_object_member(js, "textDocumentSync");
-      if (js_object_begin(js)) {
-        js_object_member(js, "openClose");
-        js_boolean(js, true);
-        js_object_member(js, "change");
-        js_integer(js, 1);
+  js_object_begin(ls->js);
+  {
+    js_object_member(ls->js, "capabilities");
+    js_object_begin(ls->js);
+    {
+      js_object_member(ls->js, "textDocumentSync");
+      js_object_begin(ls->js);
+      {
+        js_object_member(ls->js, "openClose");
+        js_boolean(ls->js, true);
+        js_object_member(ls->js, "change");
+        js_integer(ls->js, 1);
       }
-      js_object_end(js);
+      js_object_end(ls->js);
     }
-    js_object_end(js);
+    js_object_end(ls->js);
   }
-  js_object_end(js);
+  js_object_end(ls->js);
 
-  _ls_end(ls, js);
+  _ls_end(ls);
   return true;
 }
 
-static bool _ls_handle_did_open(
-    OuoLs *ls, JsonParser *jp, JsonSerializer *js, bool change) {
+static bool _ls_did_open(OuoLs *ls, bool change) {
   JsonStringOwned src = {0};
   JsonString uri = {0};
 
-  while (jp_object_member(jp)) {
-    if (jp_strcmp(jp, "textDocument")) {
-      if (!jp_object_begin(jp)) return false;
+  while (jp_object_member(ls->jp)) {
+    if (jp_strcmp(ls->jp, "textDocument")) {
+      if (!jp_object_begin(ls->jp)) return false;
 
-      while (jp_object_member(jp)) {
-        if (jp_strcmp(jp, "uri")) {
-          if (!jp_string(jp)) return false;
-          uri = jp->string;
-        } else if (!change && jp_strcmp(jp, "text")) {
-          if (!jp_string(jp)) return false;
-          json_str_unescaped(&src, &jp->string);
-        } else if (!jp_skip(jp)) return false;
+      while (jp_object_member(ls->jp)) {
+        if (jp_strcmp(ls->jp, "uri")) {
+          if (!jp_string(ls->jp)) return false;
+          uri = ls->jp->string;
+        } else if (!change && jp_strcmp(ls->jp, "text")) {
+          if (!jp_string(ls->jp)) return false;
+          json_str_unescaped(&src, &ls->jp->string);
+        } else if (!jp_skip(ls->jp)) return false;
       }
 
-      if (!jp_object_end(jp)) return false;
-    } else if (change && jp_strcmp(jp, "contentChanges")) {
-      if (!jp_array_begin(jp)) return false;
+      if (!jp_object_end(ls->jp)) return false;
+    } else if (change && jp_strcmp(ls->jp, "contentChanges")) {
+      if (!jp_array_begin(ls->jp)) return false;
 
-      while (jp_array_item(jp)) {
-        if (!jp_object_begin(jp)) return false;
+      while (jp_array_item(ls->jp)) {
+        if (!jp_object_begin(ls->jp)) return false;
 
-        while (jp_object_member(jp)) {
-          if (jp_strcmp(jp, "text")) {
-            if (!jp_string(jp)) return false;
-            json_str_unescaped(&src, &jp->string);
+        while (jp_object_member(ls->jp)) {
+          if (jp_strcmp(ls->jp, "text")) {
+            if (!jp_string(ls->jp)) return false;
+            json_str_unescaped(&src, &ls->jp->string);
           } else {
-            _jp_err(jp, "Unexpected object key %.*s", (int)jp->string.len,
-                jp->string.start);
+            _jp_err(ls->jp, "Unexpected object key %.*s",
+                (int)ls->jp->string.len, ls->jp->string.start);
             return false;
           }
         }
 
-        if (!jp_object_end(jp)) return false;
+        if (!jp_object_end(ls->jp)) return false;
       }
 
-      if (!jp_array_end(jp)) return false;
-    } else if (!jp_skip(jp)) return false;
+      if (!jp_array_end(ls->jp)) return false;
+    } else if (!jp_skip(ls->jp)) return false;
   }
 
   if (src.items == NULL) {
@@ -695,20 +713,19 @@ static bool _ls_handle_did_open(
     return false;
   }
 
-  _ls_analyze(ls, js, &src, &uri);
+  _ls_analyze(ls, &src, &uri);
   ouo_da_free(src);
   return true;
 }
 
-static bool _ls_handle_method(OuoLs *ls, JsonParser *jp, JsonSerializer *js) {
-  if (json_strcmp(&ls->method, "initialize"))
-    return _ls_handle_initialize(ls, jp, js);
+static bool _ls_handle_method(OuoLs *ls) {
+  if (json_strcmp(&ls->method, "initialize")) return _ls_initialize(ls);
 
   if (json_strcmp(&ls->method, "textDocument/didOpen"))
-    return _ls_handle_did_open(ls, jp, js, false);
+    return _ls_did_open(ls, false);
 
   if (json_strcmp(&ls->method, "textDocument/didChange"))
-    return _ls_handle_did_open(ls, jp, js, true);
+    return _ls_did_open(ls, true);
 
   if (json_strcmp(&ls->method, "initialized")) {
     ls->initialized = true;
@@ -726,64 +743,63 @@ static bool _ls_handle_method(OuoLs *ls, JsonParser *jp, JsonSerializer *js) {
   }
 
   if (ls->has_params) {
-    while (jp_object_member(jp))
-      if (!jp_skip(jp)) return false;
+    while (jp_object_member(ls->jp))
+      if (!jp_skip(ls->jp)) return false;
   }
 
   if (ls->respond) {
-    _ls_response_begin(ls, js);
-    js_null(js);
-    _ls_end(ls, js);
+    _ls_response_begin(ls);
+    js_null(ls->js);
+    _ls_end(ls);
   }
 
   return true;
 }
 
-static bool _ls_handle(OuoLs *ls, JsonParser *jp, JsonSerializer *js) {
-  if (!jp_object_begin(jp)) return false;
-  while (jp_object_member(jp)) {
-    if (jp_strcmp(jp, "jsonrpc")) {
-      if (!jp_string(jp)) return false;
-      if (!jp_strcmp(jp, "2.0")) {
-        ouo_printerr("Unknown JSON-RPC version '%.*s'.\n", (int)jp->string.len,
-            jp->string.start);
+static bool _ls_handle_request(OuoLs *ls) {
+  if (!jp_object_begin(ls->jp)) return false;
+  while (jp_object_member(ls->jp)) {
+    if (jp_strcmp(ls->jp, "jsonrpc")) {
+      if (!jp_string(ls->jp)) return false;
+      if (!jp_strcmp(ls->jp, "2.0")) {
+        ouo_printerr("Unknown JSON-RPC version '%.*s'.\n",
+            (int)ls->jp->string.len, ls->jp->string.start);
         return false;
       }
-    } else if (jp_strcmp(jp, "id")) {
-      if (!jp_number(jp)) return false;
-      ls->id = (long)jp->number;
+    } else if (jp_strcmp(ls->jp, "id")) {
+      if (!jp_number(ls->jp)) return false;
+      ls->id = (long)ls->jp->number;
       ls->respond = true;
-    } else if (jp_strcmp(jp, "method")) {
-      if (!jp_string(jp)) return false;
-      ls->method.start = jp->string.start;
-      ls->method.len = jp->string.len;
-    } else if (jp_strcmp(jp, "params")) {
-      if (!jp_object_begin(jp)) return false;
+    } else if (jp_strcmp(ls->jp, "method")) {
+      if (!jp_string(ls->jp)) return false;
+      ls->method.start = ls->jp->string.start;
+      ls->method.len = ls->jp->string.len;
+    } else if (jp_strcmp(ls->jp, "params")) {
+      if (!jp_object_begin(ls->jp)) return false;
       ls->has_params = true;
       break;
-    } else if (!jp_skip(jp)) return false;
+    } else if (!jp_skip(ls->jp)) return false;
   }
 
-  if (!_ls_handle_method(ls, jp, js)) return false;
+  if (!_ls_handle_method(ls)) return false;
 
   if (ls->has_params) {
-    if (!jp_object_end(jp)) return false;
+    if (!jp_object_end(ls->jp)) return false;
   }
-  if (!jp_object_end(jp)) return false;
-  if (!jp_end(jp)) return false;
+  if (!jp_object_end(ls->jp)) return false;
+  if (!jp_end(ls->jp)) return false;
 
   return true;
 }
 
-static void ls_handle_request(OuoLs *ls, const char *body) {
-  _ls_init(ls);
-
+static void ls_handle(OuoLs *ls, const char *body) {
   JsonParser jp = {0};
   JsonSerializer js = {0};
   _jp_init(&jp, body);
   _js_init(&js);
+  _ls_init(ls, &jp, &js);
 
-  bool result = _ls_handle(ls, &jp, &js);
+  bool result = _ls_handle_request(ls);
   if (!result) ouo_printdbg("GOT ERRORS!\n");
 }
 
@@ -816,7 +832,8 @@ int main(int argc, const char **argv) {
 
     ouo_printdbg("\n// Receive:\nContent-Length: %lu\n\n", content_len);
 
-    char *body = ouo_alloc(content_len + 1);
+    char *body = ouo_malloc(content_len + 1);
+    ouo_assert_nomem(body);
     if (fread(body, 1, content_len, stdin) != (size_t)content_len) {
       ouo_printerr("Error reading body.\n");
       ouo_free(body);
@@ -826,7 +843,7 @@ int main(int argc, const char **argv) {
 
     ouo_printdbg("%s\n", body);
 
-    ls_handle_request(&ls, body);
+    ls_handle(&ls, body);
 
     ouo_free(body);
   }

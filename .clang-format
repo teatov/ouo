@@ -6,7 +6,6 @@ AllowShortLoopsOnASingleLine: true
 BasedOnStyle: LLVM
 IncludeBlocks: Regroup
 IndentCaseLabels: true
-IndentPPDirectives: BeforeHash
 QualifierAlignment: Left
 RemoveBracesLLVM: true
 RemoveParentheses: MultipleParentheses
