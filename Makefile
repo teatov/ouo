@@ -1,15 +1,17 @@
 MAIN = ouo
 LSP = ouols
-# release: ENV=release
-ENV = debug
+# release: ENV=RELEASE
+ENV = DEBUG
 
-SRC_DIR = src
-vpath %.c $(SRC_DIR)
-vpath %.h $(SRC_DIR)
+SRC = src
+TEST = test
+
+TEST_SRCS=$(wildcard $(TEST)/*.c)
+TESTS=$(TEST_SRCS:.c=)
 
 CC = clang
-CFLAGS_debug = -g3
-CFLAGS_release = -O3 -Werror
+CFLAGS_DEBUG = -g3
+CFLAGS_RELEASE = -O3 -Werror
 CFLAGS += $(CFLAGS_$(ENV)) -std=c99 \
 	-Wall -Wextra -Wconversion -Wmissing-prototypes
 
@@ -17,17 +19,23 @@ MAKEFLAGS += --no-print-directory
 
 all: $(MAIN) $(LSP)
 
-$(MAIN): ouo.c ouo.h
+test: $(TESTS)
+	for i in $^; do echo; echo $$i; ./$$i || exit 1; done
+
+$(MAIN): $(SRC)/ouo.c $(SRC)/ouo.h
 	$(CC) $(CFLAGS) -o $@ $<
 
-$(LSP): ouols.c ouo.h
+$(LSP): $(SRC)/ouols.c $(SRC)/ouo.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(TEST)/%: $(TEST)/%.c $(TEST)/test.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -rf $(MAIN) $(LSP)
+	rm -rf $(MAIN) $(LSP) $(TESTS)
 
 re:
 	$(MAKE) clean
 	$(MAKE) all
 
-.PHONY: clean re
+.PHONY: clean re test

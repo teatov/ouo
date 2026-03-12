@@ -359,11 +359,12 @@ OuoInterpretResult ouo_interpret(OuoChunk *chunk);
 // Error handling
 //
 
-#define _OUO_ER "\e[0m"
-#define _OUO_EB "\e[1m"
-#define _OUO_EBR "\e[0;1m"
-#define _OUO_ED "\e[2m"
-#define _OUO_EBRED "\e[1;31m"
+#define OUO_ER "\e[0m"
+#define OUO_EB "\e[1m"
+#define OUO_EBR "\e[0;1m"
+#define OUO_ED "\e[2m"
+#define OUO_EBRED "\e[1;31m"
+#define OUO_EBGRN "\e[1;32m"
 
 #define _ouo_err_sprintf(err, fmt, ...) \
   snprintf((err).msg, OUO_ERRMSG_SIZE, fmt, ##__VA_ARGS__)
@@ -404,21 +405,21 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
     line_len = (size_t)(line_end - line_start);
   }
 
-  ouo_printerr(_OUO_ED);
+  ouo_printerr(OUO_ED);
   if (path != NULL) ouo_printerr("%s:", path);
   ouo_printerr("%zu:", err->line);
   if (err->col != 0) ouo_printerr("%zu:", err->col);
-  ouo_printerr(_OUO_EBR _OUO_EBRED " %s: " _OUO_EBR "%s" _OUO_ER,
+  ouo_printerr(OUO_EBR OUO_EBRED " %s: " OUO_EBR "%s" OUO_ER,
       _ouo_err_code_str(err->code), err->msg);
 
   if (line_len != 0) {
-    ouo_printerr(_OUO_ED "\n%5zu | " _OUO_ER "%.*s", err->line, (int)line_len,
-        line_start);
+    ouo_printerr(
+        OUO_ED "\n%5zu | " OUO_ER "%.*s", err->line, (int)line_len, line_start);
     if (err->len > 0) {
-      ouo_printerr(_OUO_ED "\n      | " _OUO_ER _OUO_EB);
+      ouo_printerr(OUO_ED "\n      | " OUO_ER OUO_EB);
       for (size_t i = 0; i < err->col - 1; i++) ouo_printerr(" ");
       for (size_t i = 0; i < err->len; i++) ouo_printerr("^");
-      ouo_printerr(_OUO_ER);
+      ouo_printerr(OUO_ER);
     }
   }
 
@@ -866,14 +867,8 @@ static void _ouo_c_err_bin_op_unknown(_OuoCompiler *c, OuoAst *ast) {
       _ouo_tok_kind_str(ast->bin_op.op));
 }
 
-static inline bool _ouo_ast_bin_op_is_int(OuoAst *ast) {
-  return ast->bin_op.left->type == OUO_TYPE_INT &&
-         ast->bin_op.right->type == OUO_TYPE_INT;
-}
-
-static inline bool _ouo_ast_bin_op_is_float(OuoAst *ast) {
-  return ast->bin_op.left->type == OUO_TYPE_FLOAT &&
-         ast->bin_op.right->type == OUO_TYPE_FLOAT;
+static inline bool _ouo_ast_bin_op_is(OuoAst *ast, OuoTypeKind type) {
+  return ast->bin_op.left->type == type && ast->bin_op.right->type == type;
 }
 
 static bool _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
@@ -890,8 +885,9 @@ static bool _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
         // Arithmetic
         case OUO_TOK_PLUS:
         case OUO_TOK_ASTERISK:
-          if (_ouo_ast_bin_op_is_int(ast)) ast->type = OUO_TYPE_INT;
-          else if (_ouo_ast_bin_op_is_float(ast)) ast->type = OUO_TYPE_FLOAT;
+          if (_ouo_ast_bin_op_is(ast, OUO_TYPE_INT)) ast->type = OUO_TYPE_INT;
+          else if (_ouo_ast_bin_op_is(ast, OUO_TYPE_FLOAT))
+            ast->type = OUO_TYPE_FLOAT;
           else {
             failed = true;
             _ouo_c_err_bin_op_type(c, ast);
@@ -979,17 +975,17 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
       switch (ast->bin_op.op) {
         // Arithmetic
         case OUO_TOK_PLUS:
-          if (_ouo_ast_bin_op_is_int(ast))
+          if (_ouo_ast_bin_op_is(ast, OUO_TYPE_INT))
             _ouo_c_emit_byte(c, ast, OUO_OP_INT_ADD);
-          else if (_ouo_ast_bin_op_is_float(ast))
+          else if (_ouo_ast_bin_op_is(ast, OUO_TYPE_FLOAT))
             _ouo_c_emit_byte(c, ast, OUO_OP_FLOAT_ADD);
           else _ouo_c_err_bin_op_unanalyzed(c, ast);
           break;
 
         case OUO_TOK_ASTERISK:
-          if (_ouo_ast_bin_op_is_int(ast))
+          if (_ouo_ast_bin_op_is(ast, OUO_TYPE_INT))
             _ouo_c_emit_byte(c, ast, OUO_OP_INT_MULT);
-          else if (_ouo_ast_bin_op_is_float(ast))
+          else if (_ouo_ast_bin_op_is(ast, OUO_TYPE_FLOAT))
             _ouo_c_emit_byte(c, ast, OUO_OP_FLOAT_MULT);
           else _ouo_c_err_bin_op_unanalyzed(c, ast);
           break;

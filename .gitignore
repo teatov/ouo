@@ -1,7 +1,10 @@
 .cache/
 .zed/
 build/
-test/test.ouo
+test/*
+
+!test/*.c
+!test/*.h
 
 *.exe
 *.log
