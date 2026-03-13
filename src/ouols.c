@@ -166,7 +166,7 @@ static inline char _jp_advance(JsonParser *jp) {
 }
 
 static inline void _jp_skip_whitespace(JsonParser *jp) {
-  while (!_jp_is_eof(jp) && isspace(*jp->curr)) _jp_advance(jp);
+  while (!_jp_is_eof(jp) && _ouo_l_isspace(*jp->curr)) _jp_advance(jp);
 }
 
 static inline JsonToken _jp_check_keyword(
@@ -208,7 +208,7 @@ static bool _jp_get(JsonParser *jp) {
 
   if (jp->tok != JSON_ILLEGAL) return true;
 
-  if (isdigit(c)) {
+  if (_ouo_l_isdigit(c)) {
     char *end = NULL;
     jp->number = strtod(jp->start, &end);
     if (jp->start != end) {

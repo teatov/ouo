@@ -464,7 +464,11 @@ static inline void _ouo_l_init(_OuoLexer *l, const char *src) {
 
 static inline bool _ouo_l_is_eof(_OuoLexer *l) { return *l->curr == '\0'; }
 
-static inline bool _ouo_l_is_digit(char c) { return c >= '0' && c <= '9'; }
+static inline bool _ouo_l_isdigit(char c) { return c >= '0' && c <= '9'; }
+
+static inline bool _ouo_l_isspace(char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
 
 static inline char _ouo_l_advance(_OuoLexer *l) {
   l->col++;
@@ -482,7 +486,7 @@ static inline char _ouo_l_peek_next(_OuoLexer *l) {
 static inline void _ouo_l_skip_whitespace(_OuoLexer *l) {
   for (;;) {
     char c = _ouo_l_peek(l);
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+    if (_ouo_l_isspace(c)) {
       _ouo_l_advance(l);
       if (c == '\n') {
         l->line++;
@@ -508,13 +512,13 @@ static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
 static OuoToken _ouo_l_read_number(_OuoLexer *l) {
   OuoTokenKind kind = OUO_TOK_LIT_INT;
 
-  while (_ouo_l_is_digit(_ouo_l_peek(l))) _ouo_l_advance(l);
+  while (_ouo_l_isdigit(_ouo_l_peek(l))) _ouo_l_advance(l);
 
-  if (_ouo_l_peek(l) == '.' && _ouo_l_is_digit(_ouo_l_peek_next(l))) {
+  if (_ouo_l_peek(l) == '.' && _ouo_l_isdigit(_ouo_l_peek_next(l))) {
     kind = OUO_TOK_LIT_FLOAT;
     _ouo_l_advance(l);
 
-    while (_ouo_l_is_digit(_ouo_l_peek(l))) _ouo_l_advance(l);
+    while (_ouo_l_isdigit(_ouo_l_peek(l))) _ouo_l_advance(l);
   }
 
   return _ouo_l_tok_new(l, kind);
@@ -529,7 +533,7 @@ static OuoToken _ouo_l_next_token(_OuoLexer *l) {
   char c = _ouo_l_advance(l);
 
   // Literals
-  if (_ouo_l_is_digit(c)) return _ouo_l_read_number(l);
+  if (_ouo_l_isdigit(c)) return _ouo_l_read_number(l);
 
   switch (c) {
     // Operators
