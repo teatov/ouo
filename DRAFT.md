@@ -55,10 +55,11 @@ var s: str = 'ass'
 var s: str = "ass"
 ```
 
-- [ ] interpolated string
+- [ ] template string
 
 ```ouo
-var s: str = "ass \(i + 5)"
+var t: str = "ass \(i + 5)"
+var t2: str = "ass \(if (i > 2) {) blast \(})"
 ```
 
 - [ ] raw string
@@ -298,4 +299,51 @@ if (?a) {
 
 ```ouo
 a ~= 1.0
+```
+
+## Modules
+
+- [ ] module import
+
+```ouo
+use ./relative_dir/my_module
+use /cwd_dir/my_module
+use @std/std_module
+use @std/std_module as my_module
+
+my_module::PI
+my_module::do_somethind()
+```
+
+- [ ] module export
+
+```ouo
+pub const PI = 3.14
+pub fn do_somethind() {
+  print("something!")
+}
+```
+
+- [ ] template module
+
+````ouo
+templ article: rec[title: str, date: Date, body: str]
+
+var date_fmt: str = article.date.formatted()
+
+```html
+<h1>\(article.title)</h1>
+<p>\(date_fmt)</p>
+<p>\(article.body)</p>
+````
+
+```ouo
+use article_templ
+
+var article = [
+  .title: "my article",
+  .date: Date(2000, 1, 1),
+  .body: "hiiiiii :)",
+]
+var a: str = article_templ(article)
 ```
