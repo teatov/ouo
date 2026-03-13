@@ -166,7 +166,7 @@ static inline char _jp_advance(JsonParser *jp) {
 }
 
 static inline void _jp_skip_whitespace(JsonParser *jp) {
-  while (!_jp_is_eof(jp) && isspace(*jp->curr)) _jp_advance(jp);
+  while (!_jp_is_eof(jp) && _ouo_l_isspace(*jp->curr)) _jp_advance(jp);
 }
 
 static inline JsonToken _jp_check_keyword(
@@ -208,7 +208,7 @@ static bool _jp_get(JsonParser *jp) {
 
   if (jp->tok != JSON_ILLEGAL) return true;
 
-  if (isdigit(c)) {
+  if (_ouo_l_isdigit(c)) {
     char *end = NULL;
     jp->number = strtod(jp->start, &end);
     if (jp->start != end) {
@@ -337,7 +337,7 @@ static inline bool jp_end(JsonParser *jp) {
 }
 
 //
-// JSON serializing
+// JSON serialization
 //
 
 typedef enum {
@@ -364,7 +364,7 @@ typedef struct {
 } JsonSerializer;
 
 #define _js_err(jp, fmt, ...) \
-  ouo_printerr("JSON SERIALIZING ERROR: " fmt "\n", ##__VA_ARGS__)
+  ouo_printerr("JSON SERIALIZATION ERROR: " fmt "\n", ##__VA_ARGS__)
 
 static inline void _js_init(JsonSerializer *js) {
   js->items = NULL;

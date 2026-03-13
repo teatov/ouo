@@ -4,6 +4,11 @@
 
 ```ouo
 var ass: int = 69
+```
+
+- [ ] inferring types
+
+```ouo
 var blast = 420
 ```
 
@@ -105,7 +110,7 @@ type Number = un[int, float]
 var ni: Number = 5
 var nf: Number = 5.0
 
-fn ass(blast: un[Number, str, bool]) {}
+fn ass(blast: un[Number, str, bool]) => {}
 ass(ni)
 ass('usa')
 ```
@@ -113,7 +118,7 @@ ass('usa')
 - [ ] optional types
 
 ```ouo
-type MaybeInt = un[int, none]
+type MaybeInt = un[int, nil]
 type MaybeInt = opt[int]
 ```
 
@@ -201,16 +206,16 @@ switch (a) int => print('int')
 - [ ] functions
 
 ```ouo
-fn ass(blast: int): int {
+fn ass(blast: int): int => {
 	var usa := blast + 5
 	return usa
 }
 
-fn ass(blast: int) {
+fn ass(blast: int) => {
 	print(blast + 5)
 }
 
-fn ass(blast: int) blast + 5
+fn ass(blast: int) => blast + 5
 ```
 
 ## Methods
@@ -219,7 +224,7 @@ fn ass(blast: int) blast + 5
 
 ```ouo
 type Number: int {
-	fn sum(self, other: int) self + other
+	fn sum(self, other: int) => self + other
 }
 
 var n: Number = 5
@@ -233,7 +238,7 @@ type Vec2: rec[
 	x: float,
 	y: float,
 ] {
-	fn (x: float, y: float) Vec2[.x: x, .y: y]
+	fn (x: float, y: float) => Vec2[.x: x, .y: y]
 }
 
 var v = Vec2(3.0, 4.0)
@@ -246,7 +251,7 @@ type Vec2: rec[
 	x: float,
 	y: float,
 ] {
-	fn double(v: Vec2): Vec2 {
+	fn double(v: Vec2): Vec2 => {
 		return Vec2[.x: v.x * 2.0, .y: v.y * 2.0]
 	}
 }
@@ -265,17 +270,17 @@ type Shape: trait[
 ]
 
 type Circle: rec[r: float] impl Shape {
-	fn area(self) 3.14 * self.r * self.r
+	fn area(self) => 3.14 * self.r * self.r
 }
 
 type Rect: rec[
 	w: float,
 	h: float,
 ] impl Shape {
-	fn area(self) self.w * self.h
+	fn area(self) => self.w * self.h
 }
 
-fn print_area(s: Shape) {
+fn print_area(s: Shape) => {
 	print(s.area())
 }
 
@@ -289,9 +294,9 @@ print_area(Rect[.w: 2.0, .h: 3.0])
 
 ```ouo
 if (?a) {
-	print('a is not none')
+	print('a is not nil')
 } else {
-	print('a is none')
+	print('a is nil')
 }
 ```
 
@@ -319,7 +324,7 @@ my_module::do_somethind()
 
 ```ouo
 pub const PI = 3.14
-pub fn do_somethind() {
+pub fn do_somethind() => {
   print("something!")
 }
 ```
