@@ -87,13 +87,14 @@ typedef struct {
 
 static inline void test(const char *name, const char *src, TestOptions *opt) {
   ouo_printdbg("%s: ", name);
-  OuoParseResult parse_res = ouo_parse(src);
+  OuoParseResult p_res = {0};
+  ouo_parse(src, &p_res);
 
-  if (parse_res.failed) {
+  if (p_res.failed) {
     ouo_printdbg(opt->fail ? _TEST_PASS : _TEST_FAIL);
     ouo_printdbg("\n");
     if (!opt->fail) {
-      OUO_DA_FOREACH(OuoError, err, &parse_res.errors) {
+      OUO_DA_FOREACH(OuoError, err, &p_res.errors) {
         ouo_err_msg_print(err, src, NULL);
       }
     }
@@ -111,8 +112,8 @@ static inline void test(const char *name, const char *src, TestOptions *opt) {
                                 .expr_stmt = opt->exp_ast_expr}},
               }};
 
-    if (_ast_eq(exp_ast, parse_res.ast)) ouo_printdbg(_TEST_PASS);
-    else ouo_ast_dump(parse_res.ast);
+    if (_ast_eq(exp_ast, p_res.ast)) ouo_printdbg(_TEST_PASS);
+    else ouo_ast_dump(p_res.ast);
     ouo_printdbg("\n");
   } else {
     ouo_printdbg(opt->fail ? _TEST_FAIL : _TEST_PASS);
@@ -120,8 +121,8 @@ static inline void test(const char *name, const char *src, TestOptions *opt) {
   }
 
 parse_defer:
-  ouo_ast_free(parse_res.ast);
-  ouo_da_free(parse_res.errors);
+  ouo_ast_free(p_res.ast);
+  ouo_da_free(p_res.errors);
 }
 
 #endif // TEST_H

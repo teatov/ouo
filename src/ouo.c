@@ -12,44 +12,46 @@
 #define OUO_IMPLEMENTATION
 #include "ouo.h"
 
-static OuoErrorCode run(const char *src, const char *path) {
+static OuoErrorCode run(const char *src, const char *path,
+    OuoParseResult *p_res, OuoCompileResult *c_res,
+    OuoInterpretResult *vm_res) {
   OuoErrorCode err_code = OUO_OK;
 
-  OuoParseResult parse_res = ouo_parse(src);
+  ouo_parse(src, p_res);
 
-  if (parse_res.failed) {
-    OUO_DA_FOREACH(OuoError, err, &parse_res.errors) {
+  if (p_res->failed) {
+    OUO_DA_FOREACH(OuoError, err, &p_res->errors) {
       ouo_err_msg_print(err, src, path);
       err_code = err->code;
     }
     goto parse_defer;
   }
 
-  OuoCompileResult compile_res = ouo_compile(parse_res.ast);
+  ouo_compile(p_res->ast, c_res);
 
 parse_defer:
-  ouo_ast_free(parse_res.ast);
-  ouo_da_free(parse_res.errors);
-  if (parse_res.failed) return err_code;
+  ouo_ast_free(p_res->ast);
+  ouo_da_free(p_res->errors);
+  if (p_res->failed) return err_code;
 
-  if (compile_res.failed) {
-    OUO_DA_FOREACH(OuoError, err, &compile_res.errors) {
+  if (c_res->failed) {
+    OUO_DA_FOREACH(OuoError, err, &c_res->errors) {
       ouo_err_msg_print(err, src, path);
       err_code = err->code;
     }
     goto compile_defer;
   }
 
-  OuoInterpretResult interpret_res = ouo_interpret(&compile_res.chunk);
+  ouo_interpret(&c_res->chunk, vm_res);
 
 compile_defer:
-  ouo_chunk_free(&compile_res.chunk);
-  ouo_da_free(compile_res.errors);
-  if (compile_res.failed) return err_code;
+  ouo_chunk_free(&c_res->chunk);
+  ouo_da_free(c_res->errors);
+  if (c_res->failed) return err_code;
 
-  if (interpret_res.failed) {
-    ouo_err_msg_print(&interpret_res.error, src, path);
-    err_code = interpret_res.error.code;
+  if (vm_res->failed) {
+    ouo_err_msg_print(&vm_res->error, src, path);
+    err_code = vm_res->error.code;
   }
 
   return err_code;
@@ -64,8 +66,8 @@ static char *read_line(void) {
 
   int c = '\0';
   while ((c = getchar()) != EOF) {
-    ouo_da_append(&buffer, (char)c);
     if (c == '\n') break;
+    ouo_da_append(&buffer, (char)c);
   }
 
   if (buffer.count == 0 && c == EOF) {
@@ -78,6 +80,16 @@ static char *read_line(void) {
 }
 
 static OuoErrorCode start_repl(void) {
+  struct {
+    char **items;
+    size_t count;
+    size_t capacity;
+  } lines = {0};
+
+  OuoParseResult p_res = {0};
+  OuoCompileResult c_res = {.keep_module_scope = true, .echo = true};
+  OuoInterpretResult vm_res = {0};
+
   for (;;) {
     ouo_print("ouo> ");
     char *line = read_line();
@@ -86,10 +98,13 @@ static OuoErrorCode start_repl(void) {
       break;
     }
 
-    run(line, NULL);
-    ouo_free(line);
+    run(line, NULL, &p_res, &c_res, &vm_res);
+    ouo_da_append(&lines, line);
   }
 
+  ouo_da_free(c_res.symbols);
+  OUO_DA_FOREACH(char *, line, &lines) { ouo_free(*line); }
+  ouo_da_free(lines);
   return OUO_OK;
 }
 
@@ -122,7 +137,14 @@ static char *read_file(const char *path) {
 
 static OuoErrorCode run_file(const char *path) {
   char *src = read_file(path);
-  OuoErrorCode err_code = run(src, path);
+
+  OuoParseResult p_res = {0};
+  OuoCompileResult c_res = {0};
+  OuoInterpretResult vm_res = {0};
+
+  OuoErrorCode err_code = run(src, path, &p_res, &c_res, &vm_res);
+
+  ouo_da_free(c_res.symbols);
   ouo_free(src);
   return err_code;
 }

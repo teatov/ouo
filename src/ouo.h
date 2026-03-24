@@ -78,6 +78,8 @@
   do { \
     ouo_free((da).items); \
     (da).items = NULL; \
+    (da).count = 0; \
+    (da).capacity = 0; \
   } while (0)
 
 #define OUO_DA_FOREACH(T, item, da) \
@@ -283,12 +285,13 @@ typedef struct OuoAst {
 /// Owns memory for `ast` and `errors.items`.
 typedef struct {
   bool failed;
+  size_t line;
   OuoAst *ast;
   OuoErrors errors;
 } OuoParseResult;
 
 /// Caller owns the result's `ast` and `errors`.
-OuoParseResult ouo_parse(const char *src);
+void ouo_parse(const char *src, OuoParseResult *res);
 
 /// Recursively frees the entire AST tree.
 void ouo_ast_free(OuoAst *ast);
@@ -321,6 +324,8 @@ typedef enum {
   OUO_OP_MULT_FLOAT,
   // Control flow
   OUO_OP_RETURN,
+  // I/O
+  OUO_OP_PRINT,
 } OuoOpCode;
 
 struct OuoObject;
@@ -347,17 +352,29 @@ typedef struct {
 #endif // OUO_NOEMIT
 
 /// Owns memory for `chunk.items`, `chunk.literals.items`,
-/// `chunk.lines.items` and `errors.items`.
+/// `chunk.lines.items`, `symbols.items` and `errors.items`.
 typedef struct {
   bool failed;
+  bool keep_module_scope;
+  bool echo;
+
 #ifndef OUO_NOEMIT
   OuoChunk chunk;
 #endif
+
+  size_t scope_depth;
+
+  struct {
+    OuoSymbol *items;
+    size_t count;
+    size_t capacity;
+  } symbols;
+
   OuoErrors errors;
 } OuoCompileResult;
 
 /// Caller owns the result's `chunk` and `errors`.
-OuoCompileResult ouo_compile(OuoAst *ast);
+void ouo_compile(OuoAst *ast, OuoCompileResult *res);
 
 #ifndef OUO_NOEMIT
 
@@ -387,13 +404,21 @@ typedef struct OuoObject {
   };
 } OuoObject;
 
+#define OUO_VM_STACK_SIZE 256
+
 /// Owns memory for `errors.items`.
 typedef struct {
   bool failed;
+
+  struct {
+    OuoObject items[OUO_VM_STACK_SIZE];
+    size_t count;
+  } stack;
+
   OuoError error;
 } OuoInterpretResult;
 
-OuoInterpretResult ouo_interpret(OuoChunk *chunk);
+void ouo_interpret(OuoChunk *chunk, OuoInterpretResult *res);
 
 #endif // OUO_NOEMIT
 
@@ -518,11 +543,12 @@ typedef struct {
   const char *line_start;
 } _OuoLexer;
 
-static inline void _ouo_l_init(_OuoLexer *l, const char *src) {
+static inline void _ouo_l_init(
+    _OuoLexer *l, OuoParseResult *res, const char *src) {
   l->tok_start = src;
   l->curr = src;
 
-  l->line = 1;
+  l->line = res->line + 1;
   l->col = 1;
   l->line_start = src;
 }
@@ -718,6 +744,7 @@ static inline void _ouo_p_advance(_OuoParser *p) {
 
 static inline void _ouo_p_init(_OuoParser *p, _OuoLexer *l, OuoParseResult *res,
     const _OuoParseRule *rules, size_t rules_count) {
+  res->failed = false;
   p->l = l;
   p->res = res;
   p->rules.items = rules;
@@ -925,9 +952,9 @@ static const _OuoParseRule _ouo_p_rules[] = {
     [OUO_TOK_ASTERISK] = {NULL, _ouo_p_bin_op, _OUO_PREC_PRODUCT},
 };
 
-OuoParseResult ouo_parse(const char *src) {
+void ouo_parse(const char *src, OuoParseResult *res) {
   _OuoLexer l = {0};
-  _ouo_l_init(&l, src);
+  _ouo_l_init(&l, res, src);
 
 #ifdef OUO_DEBUG
   for (;;) {
@@ -937,21 +964,19 @@ OuoParseResult ouo_parse(const char *src) {
     if (tok.kind == OUO_TOK_EOF) break;
   }
   ouo_printdbg("\n");
-  _ouo_l_init(&l, src);
+  _ouo_l_init(&l, res, src);
 #endif
 
-  OuoParseResult res = {0};
   _OuoParser p = {0};
-  _ouo_p_init(&p, &l, &res, _ouo_p_rules, ouo_arr_len(_ouo_p_rules));
+  _ouo_p_init(&p, &l, res, _ouo_p_rules, ouo_arr_len(_ouo_p_rules));
 
-  res.ast = _ouo_p_module(&p);
+  res->ast = _ouo_p_module(&p);
+  res->line = l.line;
 
 #ifdef OUO_DEBUG
-  ouo_ast_dump(res.ast);
+  ouo_ast_dump(res->ast);
   ouo_printdbg("\n");
 #endif
-
-  return res;
 }
 
 static const char *_ouo_ast_kind_str(OuoAstKind kind) {
@@ -1049,14 +1074,6 @@ void ouo_ast_dump(OuoAst *ast) {
 //
 
 typedef struct {
-  size_t scope_depth;
-
-  struct {
-    OuoSymbol *items;
-    size_t count;
-    size_t capacity;
-  } symbols;
-
   bool panic_mode;
   OuoCompileResult *res;
 } _OuoCompiler;
@@ -1085,6 +1102,7 @@ typedef struct {
   } while (0)
 
 static inline void _ouo_c_init(_OuoCompiler *c, OuoCompileResult *res) {
+  res->failed = false;
   c->res = res;
 }
 
@@ -1095,10 +1113,10 @@ static inline bool _ouo_tok_eq(OuoToken *a, OuoToken *b) {
 
 static inline bool _ouo_c_find_sym(
     _OuoCompiler *c, OuoToken *name, size_t *idx) {
-  if (c->symbols.count == 0) return false;
+  if (c->res->symbols.count == 0) return false;
 
-  for (size_t i = c->symbols.count - 1; i >= 0; i--) {
-    if (_ouo_tok_eq(name, &c->symbols.items[i].name)) {
+  for (size_t i = c->res->symbols.count - 1; i >= 0; i--) {
+    if (_ouo_tok_eq(name, &c->res->symbols.items[i].name)) {
       *idx = i;
       return true;
     }
@@ -1110,7 +1128,7 @@ static inline bool _ouo_c_find_sym(
 
 static inline void _ouo_c_add_sym(
     _OuoCompiler *c, OuoAst *ast, OuoSymbol *sym) {
-  if (c->symbols.count > UINT8_MAX) {
+  if (c->res->symbols.count > UINT8_MAX) {
     _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
         "Maximum amount of symbols exceeded (max %d).", UINT8_MAX + 1);
     return;
@@ -1120,18 +1138,18 @@ static inline void _ouo_c_add_sym(
   if (_ouo_c_find_sym(c, &sym->name, &sym_idx)) {
     _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
         "Symbol '%.*s' is already defined.", _OUO_TOK_FMT_ARGS(sym->name));
-    _ouo_c_err_nofail(c, c->symbols.items[sym_idx].name, OUO_ERR_NOTE,
+    _ouo_c_err_nofail(c, c->res->symbols.items[sym_idx].name, OUO_ERR_NOTE,
         "Previous definition here.");
     return;
   }
 
-  sym->scope_depth = c->scope_depth;
-  ouo_da_append(&c->symbols, *sym);
+  sym->scope_depth = c->res->scope_depth;
+  ouo_da_append(&c->res->symbols, *sym);
 }
 
 static inline bool _ouo_c_sym_type_is(
     _OuoCompiler *c, size_t sym_idx, OuoTypeKind type) {
-  return c->symbols.items[sym_idx].type == type;
+  return c->res->symbols.items[sym_idx].type == type;
 }
 
 // Static analysis
@@ -1145,7 +1163,7 @@ static void _ouo_c_err_assign_type(
     _OuoCompiler *c, OuoAst *ast, size_t sym_idx) {
   _ouo_c_err(c, ast->tok, OUO_ERR_TYPE, "Cannot assign '%s' to '%s'.",
       _ouo_type_kind_str(ast->assign.value->type),
-      _ouo_type_kind_str(c->symbols.items[sym_idx].type));
+      _ouo_type_kind_str(c->res->symbols.items[sym_idx].type));
 }
 
 static void _ouo_c_err_assign_invalid(_OuoCompiler *c, OuoAst *ast) {
@@ -1176,7 +1194,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_IDENT: {
       size_t sym_idx;
       if (_ouo_c_find_sym(c, &ast->ident.name, &sym_idx)) {
-        ast->type = c->symbols.items[sym_idx].type;
+        ast->type = c->res->symbols.items[sym_idx].type;
         ast->ident.sym_idx = sym_idx;
       } else _ouo_c_err_ident_undefined(c, ast);
       break;
@@ -1217,7 +1235,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       break;
 
     // Statements
-    case OUO_AST_EXPR_STMT: ast->type = OUO_TYPE_VOID; break;
+    case OUO_AST_EXPR_STMT: ast->type = ast->expr_stmt->type; break;
     case OUO_AST_DECL_VAR: {
       ast->type = OUO_TYPE_VOID;
       OuoSymbol sym = {
@@ -1337,14 +1355,22 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
       break;
 
     // Statements
-    case OUO_AST_EXPR_STMT: _ouo_c_emit_byte(c, ast, OUO_OP_POP); break;
+    case OUO_AST_EXPR_STMT:
+      if (ast->type != OUO_TYPE_VOID) {
+        if (c->res->echo && c->res->scope_depth == 0)
+          _ouo_c_emit_byte(c, ast, OUO_OP_PRINT);
+        _ouo_c_emit_byte(c, ast, OUO_OP_POP);
+      }
+      break;
     case OUO_AST_DECL_VAR: break;
   }
 }
 
 #endif // OUO_NOEMIT
 
-static inline void _ouo_c_scope_begin(_OuoCompiler *c) { c->scope_depth++; }
+static inline void _ouo_c_scope_begin(_OuoCompiler *c) {
+  c->res->scope_depth++;
+}
 
 static inline void _ouo_c_scope_end(_OuoCompiler *c,
 #ifndef OUO_NOEMIT
@@ -1353,24 +1379,29 @@ static inline void _ouo_c_scope_end(_OuoCompiler *c,
     OuoAst *_
 #endif
 ) {
-  c->scope_depth--;
-  while (c->symbols.count > 0 &&
-      c->symbols.items[c->symbols.count - 1].scope_depth > c->scope_depth) {
+  c->res->scope_depth--;
+  while (c->res->symbols.count > 0 &&
+      c->res->symbols.items[c->res->symbols.count - 1].scope_depth >
+          c->res->scope_depth) {
 #ifndef OUO_NOEMIT
     _ouo_c_emit_byte(c, ast, OUO_OP_POP);
 #endif
-    c->symbols.count--;
+    c->res->symbols.count--;
   }
 }
 
 static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
   if (ast == NULL) return;
+  bool new_scope = false;
 
   switch (ast->kind) {
     case OUO_AST_MODULE:
-      _ouo_c_scope_begin(c);
-      OUO_DA_FOREACH(OuoAst *, child, &ast->module) {
-        _ouo_c_ast(c, *child, noemit);
+      if (!c->res->keep_module_scope) {
+        new_scope = true;
+        _ouo_c_scope_begin(c);
+      }
+      OUO_DA_FOREACH(OuoAst *, stmt, &ast->module) {
+        _ouo_c_ast(c, *stmt, noemit);
       }
       break;
     case OUO_AST_IDENT: break;
@@ -1398,25 +1429,28 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
   _ouo_c_ast_emit(c, ast);
 #endif
 
-  if (ast->kind == OUO_AST_MODULE) _ouo_c_scope_end(c, ast);
+  if (new_scope) _ouo_c_scope_end(c, ast);
 }
 
-OuoCompileResult ouo_compile(OuoAst *ast) {
-  OuoCompileResult res = {0};
+void ouo_compile(OuoAst *ast, OuoCompileResult *res) {
   _OuoCompiler c = {0};
-  _ouo_c_init(&c, &res);
+  _ouo_c_init(&c, res);
 
   _ouo_c_ast(&c, ast, false);
 
-#ifndef OUO_NOEMIT
 #ifdef OUO_DEBUG
-  ouo_chunk_dump(&res.chunk, "main");
+  for (size_t i = 0; i < res->symbols.count; i++) {
+    OuoSymbol sym = res->symbols.items[i];
+    ouo_printdbg("[%zu %.*s '%s'] ", i, _OUO_TOK_FMT_ARGS(sym.name),
+        _ouo_type_kind_str(sym.type));
+  }
   ouo_printdbg("\n");
-#endif // OUO_DEBUG
-#endif // OUO_NOEMIT
 
-  ouo_da_free(c.symbols);
-  return res;
+#ifndef OUO_NOEMIT
+  ouo_chunk_dump(&res->chunk, "main");
+  ouo_printdbg("\n");
+#endif // OUO_NOEMIT
+#endif // OUO_DEBUG
 }
 
 #ifndef OUO_NOEMIT
@@ -1441,11 +1475,18 @@ static const char *_ouo_op_code_str(OuoOpCode op_code) {
     case OUO_OP_MULT_FLOAT: return "FLOAT_MULT";
     // Control flow
     case OUO_OP_RETURN: return "RETURN";
+    // I/O
+    case OUO_OP_PRINT: return "PRINT";
   }
   return "";
 }
 
 static void _ouo_obj_dump(OuoObject *obj) {
+  if (obj == NULL) {
+    ouo_printdbg("(NULL)");
+    return;
+  }
+
   switch (obj->kind) {
     case OUO_OBJ_INT: ouo_printdbg("%" OUO_PRId, obj->v_int); break;
     case OUO_OBJ_FLOAT: ouo_printdbg("%" OUO_PRIf, obj->v_float); break;
@@ -1475,8 +1516,9 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
     }
     case OUO_OP_LITERAL: {
       uint8_t lit_idx = *(++ip);
-      ouo_printdbg("%4d ", lit_idx);
+      ouo_printdbg("%4d '", lit_idx);
       _ouo_obj_dump(&chunk->literals.items[lit_idx]);
+      ouo_printdbg("'");
       break;
     }
     // Arithmetic
@@ -1486,6 +1528,8 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
     case OUO_OP_MULT_FLOAT: break;
     // Control flow
     case OUO_OP_RETURN: break;
+    // I/O
+    case OUO_OP_PRINT: break;
   }
 
   return ip - ip_prev;
@@ -1493,6 +1537,10 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
 
 void ouo_chunk_dump(OuoChunk *chunk, const char *name) {
   ouo_printdbg("%s:\n", name);
+  if (chunk->items == NULL) {
+    ouo_printdbg("(NULL)\n");
+    return;
+  }
 
   OUO_DA_FOREACH(uint8_t, ip, chunk) {
     ip += _ouo_chunk_op_dump(chunk, ip);
@@ -1506,14 +1554,8 @@ void ouo_chunk_dump(OuoChunk *chunk, const char *name) {
 // Virtual machine
 //
 
-#define OUO_VM_STACK_SIZE 256
-
 typedef struct {
   OuoChunk *chunk;
-  OuoObject stack[OUO_VM_STACK_SIZE];
-  OuoObject *stack_top;
-  OuoObject *stack_max;
-
   OuoInterpretResult *res;
 } _OuoVm;
 
@@ -1532,10 +1574,9 @@ typedef struct {
 
 static inline void _ouo_vm_init(
     _OuoVm *vm, OuoInterpretResult *res, OuoChunk *chunk) {
+  res->failed = false;
   vm->res = res;
   vm->chunk = chunk;
-  vm->stack_top = vm->stack;
-  vm->stack_max = &vm->stack[OUO_VM_STACK_SIZE];
 }
 
 static inline size_t _ouo_vm_get_line(_OuoVm *vm, const uint8_t *ip) {
@@ -1543,28 +1584,37 @@ static inline size_t _ouo_vm_get_line(_OuoVm *vm, const uint8_t *ip) {
 }
 
 static inline void _ouo_vm_stack_push(_OuoVm *vm, uint8_t *ip, OuoObject *obj) {
-  if (vm->stack_top == vm->stack_max) {
+  if (vm->res->stack.count + 1 >= OUO_VM_STACK_SIZE) {
     _ouo_vm_err(vm, _ouo_vm_get_line(vm, ip), OUO_ERR_RUNTIME,
         "Maximum stack size exceeded (max %d).", OUO_VM_STACK_SIZE);
     return;
   }
 
-  *vm->stack_top = *obj;
-  vm->stack_top++;
+  vm->res->stack.items[vm->res->stack.count] = *obj;
+  vm->res->stack.count++;
 }
 
-static inline OuoObject *_ouo_vm_stack_pop(_OuoVm *vm) {
-  ouo_assertf(
-      vm->stack_top > vm->stack, OUO_ERR_RUNTIME, "Trying to pop empty stack.");
-  vm->stack_top--;
-  return vm->stack_top;
+static inline OuoObject *_ouo_vm_stack_pop(_OuoVm *vm, uint8_t *ip) {
+  if (vm->res->stack.count == 0) {
+    _ouo_vm_err(vm, _ouo_vm_get_line(vm, ip), OUO_ERR_RUNTIME,
+        "Trying to pop empty stack.");
+    return &vm->res->stack.items[0];
+  }
+
+  vm->res->stack.count--;
+  return &vm->res->stack.items[vm->res->stack.count];
 }
 
-static inline OuoObject *_ouo_vm_stack_peek(_OuoVm *vm, ptrdiff_t offset) {
-  ouo_assertf(offset + 1 <= vm->stack_top - vm->stack, OUO_ERR_RUNTIME,
-      "Trying peek beyond the stack (offset %td, stack size %ld).", offset + 1,
-      vm->stack_top - vm->stack);
-  return vm->stack_top - 1 - offset;
+static inline OuoObject *_ouo_vm_stack_peek(
+    _OuoVm *vm, uint8_t *ip, size_t offset) {
+  if (offset + 1 > vm->res->stack.count) {
+    _ouo_vm_err(vm, _ouo_vm_get_line(vm, ip), OUO_ERR_RUNTIME,
+        "Trying peek beyond the stack (offset %td, stack size %ld).",
+        offset + 1, vm->res->stack.count);
+    return &vm->res->stack.items[0];
+  }
+
+  return &vm->res->stack.items[vm->res->stack.count - offset - 1];
 }
 
 #define _ouo_obj_new_int(v) \
@@ -1586,8 +1636,8 @@ static inline OuoObject *_ouo_vm_stack_peek(_OuoVm *vm, ptrdiff_t offset) {
 
 #define _OUO_VM_BIN_OP(vm, ip, T, OP) \
   do { \
-    ouo_##T##_t b = _ouo_vm_stack_pop((vm))->v_##T; \
-    ouo_##T##_t a = _ouo_vm_stack_pop((vm))->v_##T; \
+    ouo_##T##_t b = _ouo_vm_stack_pop((vm), (ip))->v_##T; \
+    ouo_##T##_t a = _ouo_vm_stack_pop((vm), (ip))->v_##T; \
     _ouo_vm_stack_push((vm), (ip), &_ouo_obj_new_##T(a OP b)); \
   } while (0)
 
@@ -1603,15 +1653,15 @@ static void _ouo_vm_run(_OuoVm *vm) {
     OuoOpCode op_code = (OuoOpCode)*ip;
     switch (op_code) {
       // Objects
-      case OUO_OP_POP: _ouo_vm_stack_pop(vm); break;
+      case OUO_OP_POP: _ouo_vm_stack_pop(vm, ip); break;
       case OUO_OP_VAR_GET: {
         uint8_t idx = _ouo_vm_read_byte(vm, ip);
-        _ouo_vm_stack_push(vm, ip, &vm->stack[idx]);
+        _ouo_vm_stack_push(vm, ip, &vm->res->stack.items[idx]);
         break;
       }
       case OUO_OP_VAR_SET: {
         uint8_t idx = _ouo_vm_read_byte(vm, ip);
-        vm->stack[idx] = *_ouo_vm_stack_peek(vm, 0);
+        vm->res->stack.items[idx] = *_ouo_vm_stack_pop(vm, ip);
         break;
       }
       case OUO_OP_LITERAL: {
@@ -1627,17 +1677,19 @@ static void _ouo_vm_run(_OuoVm *vm) {
       case OUO_OP_MULT_FLOAT: _OUO_VM_BIN_OP(vm, ip, float, *); break;
 
       // Control flow
-      case OUO_OP_RETURN: {
-        OuoObject *obj = _ouo_vm_stack_pop(vm);
-        _ouo_obj_dump(obj);
+      case OUO_OP_RETURN: _ouo_vm_stack_pop(vm, ip); return;
+
+      // I/O
+      case OUO_OP_PRINT: {
+        _ouo_obj_dump(_ouo_vm_stack_peek(vm, ip, 0));
         ouo_printdbg("\n");
-        return;
+        break;
       }
     }
 
 #ifdef OUO_DEBUG
-    if (vm->stack_top != vm->stack) {
-      for (OuoObject *slot = vm->stack; slot < vm->stack_top; slot++) {
+    if (vm->res->stack.count != 0) {
+      OUO_DA_FOREACH(OuoObject, slot, &vm->res->stack) {
         ouo_printdbg("[");
         _ouo_obj_dump(slot);
         ouo_printdbg("] ");
@@ -1648,14 +1700,11 @@ static void _ouo_vm_run(_OuoVm *vm) {
   }
 }
 
-OuoInterpretResult ouo_interpret(OuoChunk *chunk) {
-  OuoInterpretResult res = {0};
+void ouo_interpret(OuoChunk *chunk, OuoInterpretResult *res) {
   _OuoVm vm = {0};
-  _ouo_vm_init(&vm, &res, chunk);
+  _ouo_vm_init(&vm, res, chunk);
 
   _ouo_vm_run(&vm);
-
-  return res;
 }
 
 #endif // OUO_NOEMIT

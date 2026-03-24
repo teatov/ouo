@@ -602,26 +602,28 @@ static void _ls_analyze(OuoLs *ls, JsonStringOwned *src, JsonString *uri) {
     js_object_member(ls->js, "diagnostics");
     js_array_begin(ls->js);
     {
-      OuoParseResult parse_res = ouo_parse(src->items);
+      OuoParseResult p_res = {0};
+      ouo_parse(src->items, &p_res);
 
-      if (parse_res.failed) {
-        OUO_DA_FOREACH(OuoError, err, &parse_res.errors) {
+      if (p_res.failed) {
+        OUO_DA_FOREACH(OuoError, err, &p_res.errors) {
           _ls_diagnostic(ls, err);
         }
       } else {
-        OuoCompileResult compile_res = ouo_compile(parse_res.ast);
+        OuoCompileResult c_res = {0};
+        ouo_compile(p_res.ast, &c_res);
 
-        if (compile_res.failed) {
-          OUO_DA_FOREACH(OuoError, err, &compile_res.errors) {
+        if (c_res.failed) {
+          OUO_DA_FOREACH(OuoError, err, &c_res.errors) {
             _ls_diagnostic(ls, err);
           }
         }
 
-        ouo_da_free(compile_res.errors);
+        ouo_da_free(c_res.errors);
       }
 
-      ouo_ast_free(parse_res.ast);
-      ouo_da_free(parse_res.errors);
+      ouo_ast_free(p_res.ast);
+      ouo_da_free(p_res.errors);
     }
     js_array_end(ls->js);
 
