@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// #define OUO_DEBUG
+#define OUO_DEBUG
 #define OUO_IMPLEMENTATION
 #include "ouo.h"
 

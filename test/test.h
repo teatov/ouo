@@ -4,8 +4,8 @@
 #define OUO_IMPLEMENTATION
 #include "../src/ouo.h"
 
-#define TEST_PASS OUO_EBGRN "PASS\n" OUO_ER
-#define TEST_FAIL OUO_EBRED "FAIL\n" OUO_ER
+#define TEST_PASS _OUO_EBGRN "PASS\n" _OUO_ER
+#define TEST_FAIL _OUO_EBRED "FAIL\n" _OUO_ER
 
 typedef struct {
   bool fail;

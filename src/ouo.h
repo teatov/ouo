@@ -28,6 +28,8 @@
     exit(err_code); \
   } while (0)
 
+// Assertions
+
 #define ouo_assert(expr, err_code, fmt, ...) \
   if (!(expr)) ouo_abort(err_code, fmt, ##__VA_ARGS__)
 
@@ -177,7 +179,8 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path);
 #endif // ouo_float_t
 
 typedef enum {
-  OUO_TYPE_VOID,
+  // Indicates that no type checking happened yet
+  OUO_TYPE_UNKNOWN,
   // Scalar
   OUO_TYPE_INT,
   OUO_TYPE_FLOAT,
@@ -190,6 +193,7 @@ typedef enum {
 typedef enum {
   OUO_TOK_ILLEGAL,
   OUO_TOK_EOF,
+  OUO_TOK_NEWLINE,
   // Literals
   OUO_TOK_LIT_INT,
   OUO_TOK_LIT_FLOAT,
@@ -212,11 +216,14 @@ typedef struct {
 //
 
 typedef enum {
+  OUO_AST_MODULE,
   // Literals
   OUO_AST_LIT_INT,
   OUO_AST_LIT_FLOAT,
   // Expressions
   OUO_AST_BIN_OP,
+  // Statements
+  OUO_AST_EXPR_STMT,
 } OuoAstKind;
 
 /// Owns memory for any child AST nodes.
@@ -226,6 +233,12 @@ typedef struct OuoAst {
   OuoTypeKind type;
 
   union {
+    struct {
+      struct OuoAst **items;
+      size_t count;
+      size_t capacity;
+    } module;
+
     // Literals
     ouo_int_t lit_int;
     ouo_float_t lit_float;
@@ -236,6 +249,9 @@ typedef struct OuoAst {
       OuoTokenKind op;
       struct OuoAst *right;
     } bin_op;
+
+    // Statements
+    struct OuoAst *expr_stmt;
   };
 } OuoAst;
 
@@ -263,12 +279,13 @@ void ouo_ast_dump(OuoAst *ast);
 
 typedef enum {
   // Objects
+  OUO_OP_POP,
   OUO_OP_CONSTANT,
   // Arithmetic
-  OUO_OP_INT_ADD,
-  OUO_OP_FLOAT_ADD,
-  OUO_OP_INT_MULT,
-  OUO_OP_FLOAT_MULT,
+  OUO_OP_ADD_INT,
+  OUO_OP_ADD_FLOAT,
+  OUO_OP_MULT_INT,
+  OUO_OP_MULT_FLOAT,
   // Control flow
   OUO_OP_RETURN,
 } OuoOpCode;
@@ -354,17 +371,16 @@ OuoInterpretResult ouo_interpret(OuoChunk *chunk);
 ////////////////////////////////////////////////////////////////////////////////
 
 #ifdef OUO_IMPLEMENTATION
-
 //
 // Error handling
 //
 
-#define OUO_ER "\e[0m"
-#define OUO_EB "\e[1m"
-#define OUO_EBR "\e[0;1m"
-#define OUO_ED "\e[2m"
-#define OUO_EBRED "\e[1;31m"
-#define OUO_EBGRN "\e[1;32m"
+#define _OUO_ER "\e[0m"
+#define _OUO_EB "\e[1m"
+#define _OUO_EBR "\e[0;1m"
+#define _OUO_ED "\e[2m"
+#define _OUO_EBRED "\e[1;31m"
+#define _OUO_EBGRN "\e[1;32m"
 
 #define _ouo_err_sprintf(err, fmt, ...) \
   snprintf((err).msg, OUO_ERRMSG_SIZE, fmt, ##__VA_ARGS__)
@@ -380,8 +396,12 @@ static const char *_ouo_err_code_str(OuoErrorCode err_code) {
     case OUO_ERR_TYPE: return "TYPE ERROR";
     // Runtime
     case OUO_ERR_RUNTIME: return "RUNTIME ERROR";
-    default: return "ERROR";
+    // Generic
+    case OUO_ERR_OUT_OF_MEMORY:
+    case OUO_ERR_USAGE:
+    case OUO_ERR_READ: return "ERROR";
   }
+  return "";
 }
 
 void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
@@ -405,21 +425,20 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
     line_len = (size_t)(line_end - line_start);
   }
 
-  ouo_printerr(OUO_ED);
+  ouo_printerr(_OUO_ED);
   if (path != NULL) ouo_printerr("%s:", path);
   ouo_printerr("%zu:", err->line);
   if (err->col != 0) ouo_printerr("%zu:", err->col);
-  ouo_printerr(OUO_EBR OUO_EBRED " %s: " OUO_EBR "%s" OUO_ER,
+  ouo_printerr(_OUO_EBR _OUO_EBRED " %s: " _OUO_EBR "%s" _OUO_ER,
       _ouo_err_code_str(err->code), err->msg);
 
   if (line_len != 0) {
-    ouo_printerr(
-        OUO_ED "\n%5zu | " OUO_ER "%.*s", err->line, (int)line_len, line_start);
+    ouo_printerr("\n%.*s", (int)line_len, line_start);
     if (err->len > 0) {
-      ouo_printerr(OUO_ED "\n      | " OUO_ER OUO_EB);
+      ouo_printerr("\n" _OUO_ED);
       for (size_t i = 0; i < err->col - 1; i++) ouo_printerr(" ");
       for (size_t i = 0; i < err->len; i++) ouo_printerr("^");
-      ouo_printerr(OUO_ER);
+      ouo_printerr(_OUO_ER);
     }
   }
 
@@ -432,7 +451,7 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
 
 static const char *_ouo_type_kind_str(OuoTypeKind kind) {
   switch (kind) {
-    case OUO_TYPE_VOID: return "void";
+    case OUO_TYPE_UNKNOWN: return "unknown";
     // Scalar
     case OUO_TYPE_INT: return "int";
     case OUO_TYPE_FLOAT: return "float";
@@ -445,7 +464,7 @@ static const char *_ouo_type_kind_str(OuoTypeKind kind) {
 //
 
 typedef struct {
-  const char *start;
+  const char *tok_start;
   const char *curr;
 
   size_t line;
@@ -454,7 +473,7 @@ typedef struct {
 } _OuoLexer;
 
 static inline void _ouo_l_init(_OuoLexer *l, const char *src) {
-  l->start = src;
+  l->tok_start = src;
   l->curr = src;
 
   l->line = 1;
@@ -464,7 +483,11 @@ static inline void _ouo_l_init(_OuoLexer *l, const char *src) {
 
 static inline bool _ouo_l_is_eof(_OuoLexer *l) { return *l->curr == '\0'; }
 
-static inline bool _ouo_l_is_digit(char c) { return c >= '0' && c <= '9'; }
+static inline bool _ouo_l_isdigit(char c) { return c >= '0' && c <= '9'; }
+
+static inline bool _ouo_l_isspace(char c) {
+  return c == ' ' || c == '\t' || c == '\r';
+}
 
 static inline char _ouo_l_advance(_OuoLexer *l) {
   l->col++;
@@ -482,22 +505,16 @@ static inline char _ouo_l_peek_next(_OuoLexer *l) {
 static inline void _ouo_l_skip_whitespace(_OuoLexer *l) {
   for (;;) {
     char c = _ouo_l_peek(l);
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-      _ouo_l_advance(l);
-      if (c == '\n') {
-        l->line++;
-        l->col = 1;
-        l->line_start = l->curr;
-      }
-    } else return;
+    if (_ouo_l_isspace(c)) _ouo_l_advance(l);
+    else return;
   }
 }
 
 static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
-  size_t len = (size_t)(l->curr - l->start);
+  size_t len = (size_t)(l->curr - l->tok_start);
   return (OuoToken){
       .kind = kind,
-      .start = l->start,
+      .start = l->tok_start,
       .len = len,
       .line = l->line,
       .col = l->col - len,
@@ -506,15 +523,14 @@ static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
 }
 
 static OuoToken _ouo_l_read_number(_OuoLexer *l) {
+  while (_ouo_l_isdigit(_ouo_l_peek(l))) _ouo_l_advance(l);
+
   OuoTokenKind kind = OUO_TOK_LIT_INT;
-
-  while (_ouo_l_is_digit(_ouo_l_peek(l))) _ouo_l_advance(l);
-
-  if (_ouo_l_peek(l) == '.' && _ouo_l_is_digit(_ouo_l_peek_next(l))) {
+  if (_ouo_l_peek(l) == '.' && _ouo_l_isdigit(_ouo_l_peek_next(l))) {
     kind = OUO_TOK_LIT_FLOAT;
     _ouo_l_advance(l);
 
-    while (_ouo_l_is_digit(_ouo_l_peek(l))) _ouo_l_advance(l);
+    while (_ouo_l_isdigit(_ouo_l_peek(l))) _ouo_l_advance(l);
   }
 
   return _ouo_l_tok_new(l, kind);
@@ -522,14 +538,21 @@ static OuoToken _ouo_l_read_number(_OuoLexer *l) {
 
 static OuoToken _ouo_l_next_token(_OuoLexer *l) {
   _ouo_l_skip_whitespace(l);
-  l->start = l->curr;
+  l->tok_start = l->curr;
 
   if (_ouo_l_is_eof(l)) return _ouo_l_tok_new(l, OUO_TOK_EOF);
 
   char c = _ouo_l_advance(l);
 
+  if (c == '\n') {
+    l->line++;
+    l->col = 1;
+    l->line_start = l->curr;
+    return _ouo_l_tok_new(l, OUO_TOK_NEWLINE);
+  }
+
   // Literals
-  if (_ouo_l_is_digit(c)) return _ouo_l_read_number(l);
+  if (_ouo_l_isdigit(c)) return _ouo_l_read_number(l);
 
   switch (c) {
     // Operators
@@ -545,6 +568,7 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
   switch (kind) {
     case OUO_TOK_ILLEGAL: return "ILLEGAL";
     case OUO_TOK_EOF: return "EOF";
+    case OUO_TOK_NEWLINE: return "NEWLINE";
     // Literals
     case OUO_TOK_LIT_INT: return "LIT_INT";
     case OUO_TOK_LIT_FLOAT: return "LIT_FLOAT";
@@ -579,9 +603,9 @@ typedef OuoAst *(*_OuoParsePrefixFn)(_OuoParser *p);
 typedef OuoAst *(*_OuoParseInfixFn)(_OuoParser *p, OuoAst *left);
 
 typedef enum {
-  OUO_PREC_LOWEST,
-  OUO_PREC_SUM,
-  OUO_PREC_PRODUCT,
+  _OUO_PREC_LOWEST,
+  _OUO_PREC_SUM,
+  _OUO_PREC_PRODUCT,
 } _OuoPrecedence;
 
 typedef struct _OuoParseRule {
@@ -608,6 +632,10 @@ typedef struct _OuoParseRule {
     } \
   } while (0)
 
+#define _OUO_TOK_FMT_ARGS(tok) \
+  p->curr.kind == OUO_TOK_EOF ? 3 : (int)p->curr.len, \
+      p->curr.kind == OUO_TOK_EOF ? "EOF" : p->curr.start
+
 static inline void _ouo_p_advance(_OuoParser *p) {
   p->curr = p->peek;
   p->peek = _ouo_l_next_token(p->l);
@@ -628,7 +656,21 @@ static inline OuoAst *_ouo_ast_new(OuoToken *tok, OuoAstKind kind) {
   ouo_assert_nomem(ast);
   ast->kind = kind;
   ast->tok = *tok;
-  ast->type = OUO_TYPE_VOID;
+  ast->type = OUO_TYPE_UNKNOWN;
+  return ast;
+}
+
+static OuoAst *_ouo_p_stmt(_OuoParser *p);
+
+static OuoAst *_ouo_p_module(_OuoParser *p) {
+  OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_MODULE);
+
+  while (p->curr.kind != OUO_TOK_EOF) {
+    OuoAst *stmt = _ouo_p_stmt(p);
+    if (stmt != NULL) ouo_da_append(&ast->module, stmt);
+    _ouo_p_advance(p);
+  }
+
   return ast;
 }
 
@@ -643,20 +685,20 @@ static OuoAst *_ouo_p_expr(_OuoParser *p, _OuoPrecedence prec) {
 
   if (prefix_fn == NULL) {
     _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX,
-        "Expected an expression, got '%.*s'.", (int)p->curr.len, p->curr.start);
+        "Expected an expression, got '%.*s'.", _OUO_TOK_FMT_ARGS(p->curr));
     return NULL;
   }
 
   OuoAst *left = prefix_fn(p);
 
-  while (p->peek.kind != OUO_TOK_EOF &&
+  while (p->peek.kind != OUO_TOK_EOF && p->peek.kind != OUO_TOK_NEWLINE &&
          prec <= _ouo_p_get_rule(p, p->peek.kind)->prec) {
     _OuoParseInfixFn infix_fn = _ouo_p_get_rule(p, p->peek.kind)->infix_fn;
 
     if (infix_fn == NULL) {
       _ouo_p_err(p, p->peek, OUO_ERR_SYNTAX,
-          "Expected a binary operator, got '%.*s'.", (int)p->peek.len,
-          p->peek.start);
+          "Expected a binary operator, got '%.*s'.",
+          _OUO_TOK_FMT_ARGS(p->curr));
       goto errdefer;
     }
 
@@ -732,14 +774,23 @@ static OuoAst *_ouo_p_bin_op(_OuoParser *p, OuoAst *left) {
   return ast;
 }
 
+static OuoAst *_ouo_p_expr_stmt(_OuoParser *p) {
+  OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_EXPR_STMT);
+  ast->expr_stmt = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  if (p->peek.kind == OUO_TOK_NEWLINE) _ouo_p_advance(p);
+  return ast;
+}
+
+static OuoAst *_ouo_p_stmt(_OuoParser *p) { return _ouo_p_expr_stmt(p); }
+
 static const _OuoParseRule _ouo_p_rules[] = {
-    [OUO_TOK_EOF] = {NULL, NULL, OUO_PREC_LOWEST},
+    [OUO_TOK_EOF] = {NULL, NULL, _OUO_PREC_LOWEST},
     // Literals
-    [OUO_TOK_LIT_INT] = {_ouo_p_lit_int, NULL, OUO_PREC_LOWEST},
-    [OUO_TOK_LIT_FLOAT] = {_ouo_p_lit_float, NULL, OUO_PREC_LOWEST},
+    [OUO_TOK_LIT_INT] = {_ouo_p_lit_int, NULL, _OUO_PREC_LOWEST},
+    [OUO_TOK_LIT_FLOAT] = {_ouo_p_lit_float, NULL, _OUO_PREC_LOWEST},
     // Operators
-    [OUO_TOK_PLUS] = {NULL, _ouo_p_bin_op, OUO_PREC_SUM},
-    [OUO_TOK_ASTERISK] = {NULL, _ouo_p_bin_op, OUO_PREC_PRODUCT},
+    [OUO_TOK_PLUS] = {NULL, _ouo_p_bin_op, _OUO_PREC_SUM},
+    [OUO_TOK_ASTERISK] = {NULL, _ouo_p_bin_op, _OUO_PREC_PRODUCT},
 };
 
 OuoParseResult ouo_parse(const char *src) {
@@ -761,7 +812,7 @@ OuoParseResult ouo_parse(const char *src) {
   _OuoParser p = {0};
   _ouo_p_init(&p, &l, &res, _ouo_p_rules, ouo_arr_len(_ouo_p_rules));
 
-  res.ast = _ouo_p_expr(&p, OUO_PREC_LOWEST);
+  res.ast = _ouo_p_module(&p);
 
 #ifdef OUO_DEBUG
   ouo_ast_dump(res.ast);
@@ -773,11 +824,14 @@ OuoParseResult ouo_parse(const char *src) {
 
 static const char *_ouo_ast_kind_str(OuoAstKind kind) {
   switch (kind) {
+    case OUO_AST_MODULE: return "MODULE";
     // Literals
     case OUO_AST_LIT_INT: return "LIT_INT";
     case OUO_AST_LIT_FLOAT: return "LIT_FLOAT";
     // Expressions
     case OUO_AST_BIN_OP: return "BIN_OP";
+    // Statements
+    case OUO_AST_EXPR_STMT: return "EXPR_STMT";
   }
   return "";
 }
@@ -786,16 +840,23 @@ void ouo_ast_free(OuoAst *ast) {
   if (ast == NULL) return;
 
   switch (ast->kind) {
+    case OUO_AST_MODULE:
+      OUO_DA_FOREACH(OuoAst *, child, &ast->module) { ouo_ast_free(*child); }
+      ouo_da_free(ast->module);
+      break;
     // Literals
     case OUO_AST_LIT_INT:
-    case OUO_AST_LIT_FLOAT: ouo_free(ast); break;
+    case OUO_AST_LIT_FLOAT: break;
     // Expressions
     case OUO_AST_BIN_OP:
       ouo_ast_free(ast->bin_op.left);
       ouo_ast_free(ast->bin_op.right);
-      ouo_free(ast);
       break;
+    // Statements
+    case OUO_AST_EXPR_STMT: ouo_ast_free(ast->expr_stmt); break;
   }
+
+  ouo_free(ast);
 }
 
 void ouo_ast_dump(OuoAst *ast) {
@@ -807,6 +868,13 @@ void ouo_ast_dump(OuoAst *ast) {
   ouo_printdbg("(%s ", _ouo_ast_kind_str(ast->kind));
 
   switch (ast->kind) {
+    case OUO_AST_MODULE:
+      ouo_printdbg("\n");
+      OUO_DA_FOREACH(OuoAst *, child, &ast->module) {
+        ouo_ast_dump(*child);
+        ouo_printdbg("\n");
+      }
+      break;
     // Literals
     case OUO_AST_LIT_INT: ouo_printdbg("%" OUO_PRId, ast->lit_int); break;
     case OUO_AST_LIT_FLOAT: ouo_printdbg("%" OUO_PRIf, ast->lit_float); break;
@@ -816,6 +884,8 @@ void ouo_ast_dump(OuoAst *ast) {
       ouo_printdbg(" %s ", _ouo_tok_kind_str(ast->bin_op.op));
       ouo_ast_dump(ast->bin_op.right);
       break;
+    // Statements
+    case OUO_AST_EXPR_STMT: ouo_ast_dump(ast->expr_stmt); break;
   }
 
   ouo_printdbg(")");
@@ -875,6 +945,8 @@ static bool _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
   bool failed = false;
 
   switch (ast->kind) {
+    case OUO_AST_MODULE: ast->type = OUO_TYPE_UNKNOWN; break;
+
     // Literals
     case OUO_AST_LIT_INT: ast->type = OUO_TYPE_INT; break;
     case OUO_AST_LIT_FLOAT: ast->type = OUO_TYPE_FLOAT; break;
@@ -897,6 +969,9 @@ static bool _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
         default: _ouo_c_err_bin_op_unknown(c, ast); break;
       }
       break;
+
+    // Statements
+    case OUO_AST_EXPR_STMT: ast->type = OUO_TYPE_UNKNOWN; break;
   }
 
   return failed;
@@ -904,7 +979,7 @@ static bool _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
 
 #ifndef OUO_NOEMIT
 
-// Bytecode emitting
+// Bytecode emission
 
 static void _ouo_c_err_bin_op_unanalyzed(_OuoCompiler *c, OuoAst *ast) {
   _ouo_c_err(c, ast, OUO_ERR_COMPILE_FAIL,
@@ -951,6 +1026,8 @@ static void _ouo_c_emit_constant(_OuoCompiler *c, OuoAst *ast, OuoObject *obj) {
 
 static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
   switch (ast->kind) {
+    case OUO_AST_MODULE: break;
+
     // Literals
     case OUO_AST_LIT_INT: {
       OuoObject obj = {
@@ -976,23 +1053,26 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
         // Arithmetic
         case OUO_TOK_PLUS:
           if (_ouo_ast_bin_op_is(ast, OUO_TYPE_INT))
-            _ouo_c_emit_byte(c, ast, OUO_OP_INT_ADD);
+            _ouo_c_emit_byte(c, ast, OUO_OP_ADD_INT);
           else if (_ouo_ast_bin_op_is(ast, OUO_TYPE_FLOAT))
-            _ouo_c_emit_byte(c, ast, OUO_OP_FLOAT_ADD);
+            _ouo_c_emit_byte(c, ast, OUO_OP_ADD_FLOAT);
           else _ouo_c_err_bin_op_unanalyzed(c, ast);
           break;
 
         case OUO_TOK_ASTERISK:
           if (_ouo_ast_bin_op_is(ast, OUO_TYPE_INT))
-            _ouo_c_emit_byte(c, ast, OUO_OP_INT_MULT);
+            _ouo_c_emit_byte(c, ast, OUO_OP_MULT_INT);
           else if (_ouo_ast_bin_op_is(ast, OUO_TYPE_FLOAT))
-            _ouo_c_emit_byte(c, ast, OUO_OP_FLOAT_MULT);
+            _ouo_c_emit_byte(c, ast, OUO_OP_MULT_FLOAT);
           else _ouo_c_err_bin_op_unanalyzed(c, ast);
           break;
 
         default: _ouo_c_err_bin_op_unknown(c, ast); break;
       }
       break;
+
+    // Statements
+    case OUO_AST_EXPR_STMT: _ouo_c_emit_byte(c, ast, OUO_OP_POP); break;
   }
 }
 
@@ -1002,6 +1082,9 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast) {
   if (ast == NULL) return;
 
   switch (ast->kind) {
+    case OUO_AST_MODULE:
+      OUO_DA_FOREACH(OuoAst *, child, &ast->module) { _ouo_c_ast(c, *child); }
+      break;
     // Literals
     case OUO_AST_LIT_INT:
     case OUO_AST_LIT_FLOAT: break;
@@ -1010,6 +1093,8 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast) {
       _ouo_c_ast(c, ast->bin_op.left);
       _ouo_c_ast(c, ast->bin_op.right);
       break;
+    // Statements
+    case OUO_AST_EXPR_STMT: _ouo_c_ast(c, ast->expr_stmt); break;
   }
 
   bool failed = _ouo_c_ast_analyze(c, ast);
@@ -1028,17 +1113,10 @@ OuoCompileResult ouo_compile(OuoAst *ast) {
   _ouo_c_ast(&c, ast);
 
 #ifndef OUO_NOEMIT
-
-  _ouo_c_chunk_write(&c, OUO_OP_RETURN,
-      res.chunk.lines.count > 0
-          ? res.chunk.lines.items[res.chunk.lines.count - 1]
-          : 0);
-
 #ifdef OUO_DEBUG
   ouo_chunk_dump(&res.chunk, "main");
   ouo_printdbg("\n");
-#endif
-
+#endif // OUO_DEBUG
 #endif // OUO_NOEMIT
 
   return res;
@@ -1055,12 +1133,13 @@ void ouo_chunk_free(OuoChunk *chunk) {
 static const char *_ouo_op_code_str(OuoOpCode op_code) {
   switch (op_code) {
     // Objects
+    case OUO_OP_POP: return "POP";
     case OUO_OP_CONSTANT: return "CONSTANT";
     // Arithmetic
-    case OUO_OP_INT_ADD: return "INT_ADD";
-    case OUO_OP_FLOAT_ADD: return "FLOAT_ADD";
-    case OUO_OP_INT_MULT: return "INT_MULT";
-    case OUO_OP_FLOAT_MULT: return "FLOAT_MULT";
+    case OUO_OP_ADD_INT: return "INT_ADD";
+    case OUO_OP_ADD_FLOAT: return "FLOAT_ADD";
+    case OUO_OP_MULT_INT: return "INT_MULT";
+    case OUO_OP_MULT_FLOAT: return "FLOAT_MULT";
     // Control flow
     case OUO_OP_RETURN: return "RETURN";
   }
@@ -1087,13 +1166,21 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
   ouo_printdbg("%-16s", _ouo_op_code_str(op_code));
 
   switch (op_code) {
+    // Objects
+    case OUO_OP_POP: break;
     case OUO_OP_CONSTANT: {
       uint8_t constant = *(++ip);
       ouo_printdbg("%4d ", constant);
       _ouo_obj_dump(&chunk->constants.items[constant]);
       break;
     }
-    default: break;
+    // Arithmetic
+    case OUO_OP_ADD_INT:
+    case OUO_OP_ADD_FLOAT:
+    case OUO_OP_MULT_INT:
+    case OUO_OP_MULT_FLOAT:
+    // Control flow
+    case OUO_OP_RETURN: break;
   }
 
   return ip - ip_prev;
@@ -1210,6 +1297,7 @@ static void _ouo_vm_run(_OuoVm *vm) {
     OuoOpCode op_code = (OuoOpCode)*ip;
     switch (op_code) {
       // Objects
+      case OUO_OP_POP: _ouo_vm_stack_pop(vm); break;
       case OUO_OP_CONSTANT: {
         OuoObject constant = _ouo_vm_read_constant(vm, ip);
         _ouo_vm_stack_push(vm, ip, constant);
@@ -1217,10 +1305,10 @@ static void _ouo_vm_run(_OuoVm *vm) {
       }
 
       // Arithmetic
-      case OUO_OP_INT_ADD: _OUO_VM_BIN_OP(vm, ip, int, +); break;
-      case OUO_OP_FLOAT_ADD: _OUO_VM_BIN_OP(vm, ip, float, +); break;
-      case OUO_OP_INT_MULT: _OUO_VM_BIN_OP(vm, ip, int, *); break;
-      case OUO_OP_FLOAT_MULT: _OUO_VM_BIN_OP(vm, ip, float, *); break;
+      case OUO_OP_ADD_INT: _OUO_VM_BIN_OP(vm, ip, int, +); break;
+      case OUO_OP_ADD_FLOAT: _OUO_VM_BIN_OP(vm, ip, float, +); break;
+      case OUO_OP_MULT_INT: _OUO_VM_BIN_OP(vm, ip, int, *); break;
+      case OUO_OP_MULT_FLOAT: _OUO_VM_BIN_OP(vm, ip, float, *); break;
 
       // Control flow
       case OUO_OP_RETURN: {

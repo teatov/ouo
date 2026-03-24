@@ -123,7 +123,7 @@ static void json_str_unescaped(JsonStringOwned *owned, JsonString *s) {
 }
 
 typedef struct {
-  const char *start;
+  const char *tok_start;
   const char *curr;
   JsonToken tok;
 
@@ -135,7 +135,7 @@ typedef struct {
 } JsonParser;
 
 static inline void _jp_init(JsonParser *jp, const char *src) {
-  jp->start = src;
+  jp->tok_start = src;
   jp->curr = src;
   jp->tok = JSON_ILLEGAL;
 
@@ -166,14 +166,14 @@ static inline char _jp_advance(JsonParser *jp) {
 }
 
 static inline void _jp_skip_whitespace(JsonParser *jp) {
-  while (!_jp_is_eof(jp) && isspace(*jp->curr)) _jp_advance(jp);
+  while (!_jp_is_eof(jp) && _ouo_l_isspace(*jp->curr)) _jp_advance(jp);
 }
 
 static inline JsonToken _jp_check_keyword(
-    JsonParser *jp, size_t len, const char *rest, JsonToken tok) {
-  if (!isalpha(*(jp->start + len + 1)) &&
-      memcmp(jp->start + 1, rest, len) == 0) {
-    jp->curr += len;
+    JsonParser *jp, size_t rest_len, const char *rest, JsonToken tok) {
+  if (!isalpha(*(jp->tok_start + rest_len + 1)) &&
+      memcmp(jp->tok_start + 1, rest, rest_len) == 0) {
+    jp->curr += rest_len;
     return tok;
   }
   return JSON_ILLEGAL;
@@ -181,7 +181,7 @@ static inline JsonToken _jp_check_keyword(
 
 static bool _jp_get(JsonParser *jp) {
   _jp_skip_whitespace(jp);
-  jp->start = jp->curr;
+  jp->tok_start = jp->curr;
 
   if (_jp_is_eof(jp)) {
     jp->tok = JSON_EOF;
@@ -208,10 +208,10 @@ static bool _jp_get(JsonParser *jp) {
 
   if (jp->tok != JSON_ILLEGAL) return true;
 
-  if (isdigit(c)) {
+  if (_ouo_l_isdigit(c)) {
     char *end = NULL;
-    jp->number = strtod(jp->start, &end);
-    if (jp->start != end) {
+    jp->number = strtod(jp->tok_start, &end);
+    if (jp->tok_start != end) {
       jp->curr = end;
       jp->tok = JSON_NUMBER;
       return true;
@@ -337,7 +337,7 @@ static inline bool jp_end(JsonParser *jp) {
 }
 
 //
-// JSON serializing
+// JSON serialization
 //
 
 typedef enum {
@@ -364,7 +364,7 @@ typedef struct {
 } JsonSerializer;
 
 #define _js_err(jp, fmt, ...) \
-  ouo_printerr("JSON SERIALIZING ERROR: " fmt "\n", ##__VA_ARGS__)
+  ouo_printerr("JSON SERIALIZATION ERROR: " fmt "\n", ##__VA_ARGS__)
 
 static inline void _js_init(JsonSerializer *js) {
   js->items = NULL;
