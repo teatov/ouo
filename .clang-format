@@ -1,5 +1,6 @@
 AlignAfterOpenBracket: false
 AlignEscapedNewlines: DontAlign
+AlignOperands: DontAlign
 AllowShortCaseLabelsOnASingleLine: true
 AllowShortIfStatementsOnASingleLine: AllIfsAndElse
 AllowShortLoopsOnASingleLine: true
