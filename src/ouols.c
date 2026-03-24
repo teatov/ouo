@@ -94,7 +94,7 @@ static inline JsonString json_str_new(const char *str) {
 
 static inline bool json_strcmp(JsonString *json_str, const char *str) {
   return json_str->start != NULL &&
-         strncmp(json_str->start, str, json_str->len) == 0;
+      strncmp(json_str->start, str, json_str->len) == 0;
 }
 
 static void json_str_unescaped(JsonStringOwned *owned, JsonString *s) {

@@ -465,7 +465,7 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
   if (path != NULL) ouo_printerr("%s:", path);
   ouo_printerr("%zu:", err->line);
   if (err->col != 0) ouo_printerr("%zu:", err->col);
-  ouo_printerr(_OUO_EBR "%s %s: " _OUO_EBR "%s" _OUO_ER,
+  ouo_printerr(_OUO_ER "%s %s: " _OUO_EBR "%s" _OUO_ER,
       err->code == OUO_ERR_NOTE ? _OUO_EBD : _OUO_EBRED,
       _ouo_err_code_str(err->code), err->msg);
 
@@ -483,7 +483,7 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
 }
 
 //
-// Data types
+// Types
 //
 
 static const char *_ouo_type_kind_str(OuoTypeKind kind) {
@@ -1088,7 +1088,7 @@ static inline void _ouo_c_init(_OuoCompiler *c, OuoCompileResult *res) {
   c->res = res;
 }
 
-static inline bool _ouo_c_ident_eq(OuoToken *a, OuoToken *b) {
+static inline bool _ouo_tok_eq(OuoToken *a, OuoToken *b) {
   if (a->len != b->len) return false;
   return memcmp(a->start, b->start, a->len) == 0;
 }
@@ -1098,7 +1098,7 @@ static inline bool _ouo_c_find_sym(
   if (c->symbols.count == 0) return false;
 
   for (size_t i = c->symbols.count - 1; i >= 0; i--) {
-    if (_ouo_c_ident_eq(name, &c->symbols.items[i].name)) {
+    if (_ouo_tok_eq(name, &c->symbols.items[i].name)) {
       *idx = i;
       return true;
     }

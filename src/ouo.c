@@ -112,8 +112,8 @@ static char *read_file(const char *path) {
   ouo_assert_nomem(buffer);
 
   size_t bytes_read = fread(buffer, sizeof(char), file_size, file);
-  ouo_assert(bytes_read == file_size, OUO_ERR_READ, "%s: %s.", path,
-      strerror(errno));
+  ouo_assert(
+      bytes_read == file_size, OUO_ERR_READ, "%s: %s.", path, strerror(errno));
 
   buffer[bytes_read] = '\0';
   fclose(file);
