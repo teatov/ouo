@@ -154,7 +154,7 @@ static inline void _jp_init(JsonParser *jp, const char *src) {
     } \
   } while (0)
 
-static inline bool jp_strcmp(JsonParser *jp, const char *str) {
+static inline bool jp_str_eq(JsonParser *jp, const char *str) {
   return json_strcmp(&jp->string, str);
 }
 
@@ -586,7 +586,7 @@ static void _ls_diagnostic(OuoLs *ls, OuoError *err) {
     js_object_end(ls->js);
 
     js_object_member(ls->js, "severity");
-    js_integer(ls->js, 1);
+    js_integer(ls->js, err->code == OUO_ERR_NOTE ? 3 : 1);
 
     js_object_member(ls->js, "source");
     js_string_raw(ls->js, "ouols");
@@ -635,7 +635,7 @@ static void _ls_analyze(OuoLs *ls, JsonStringOwned *src, JsonString *uri) {
 
 static bool _ls_initialize(OuoLs *ls) {
   while (jp_object_member(ls->jp)) {
-    if (jp_strcmp(ls->jp, "processId")) {
+    if (jp_str_eq(ls->jp, "processId")) {
       if (!jp_number(ls->jp)) return false;
     } else if (!jp_skip(ls->jp)) return false;
   }
@@ -670,28 +670,28 @@ static bool _ls_did_open(OuoLs *ls, bool change) {
   JsonString uri = {0};
 
   while (jp_object_member(ls->jp)) {
-    if (jp_strcmp(ls->jp, "textDocument")) {
+    if (jp_str_eq(ls->jp, "textDocument")) {
       if (!jp_object_begin(ls->jp)) return false;
 
       while (jp_object_member(ls->jp)) {
-        if (jp_strcmp(ls->jp, "uri")) {
+        if (jp_str_eq(ls->jp, "uri")) {
           if (!jp_string(ls->jp)) return false;
           uri = ls->jp->string;
-        } else if (!change && jp_strcmp(ls->jp, "text")) {
+        } else if (!change && jp_str_eq(ls->jp, "text")) {
           if (!jp_string(ls->jp)) return false;
           json_str_unescaped(&src, &ls->jp->string);
         } else if (!jp_skip(ls->jp)) return false;
       }
 
       if (!jp_object_end(ls->jp)) return false;
-    } else if (change && jp_strcmp(ls->jp, "contentChanges")) {
+    } else if (change && jp_str_eq(ls->jp, "contentChanges")) {
       if (!jp_array_begin(ls->jp)) return false;
 
       while (jp_array_item(ls->jp)) {
         if (!jp_object_begin(ls->jp)) return false;
 
         while (jp_object_member(ls->jp)) {
-          if (jp_strcmp(ls->jp, "text")) {
+          if (jp_str_eq(ls->jp, "text")) {
             if (!jp_string(ls->jp)) return false;
             json_str_unescaped(&src, &ls->jp->string);
           } else {
@@ -759,22 +759,22 @@ static bool _ls_handle_method(OuoLs *ls) {
 static bool _ls_handle_request(OuoLs *ls) {
   if (!jp_object_begin(ls->jp)) return false;
   while (jp_object_member(ls->jp)) {
-    if (jp_strcmp(ls->jp, "jsonrpc")) {
+    if (jp_str_eq(ls->jp, "jsonrpc")) {
       if (!jp_string(ls->jp)) return false;
-      if (!jp_strcmp(ls->jp, "2.0")) {
+      if (!jp_str_eq(ls->jp, "2.0")) {
         ouo_printerr("Unknown JSON-RPC version '%.*s'.\n",
             (int)ls->jp->string.len, ls->jp->string.start);
         return false;
       }
-    } else if (jp_strcmp(ls->jp, "id")) {
+    } else if (jp_str_eq(ls->jp, "id")) {
       if (!jp_number(ls->jp)) return false;
       ls->id = (long)ls->jp->number;
       ls->respond = true;
-    } else if (jp_strcmp(ls->jp, "method")) {
+    } else if (jp_str_eq(ls->jp, "method")) {
       if (!jp_string(ls->jp)) return false;
       ls->method.start = ls->jp->string.start;
       ls->method.len = ls->jp->string.len;
-    } else if (jp_strcmp(ls->jp, "params")) {
+    } else if (jp_str_eq(ls->jp, "params")) {
       if (!jp_object_begin(ls->jp)) return false;
       ls->has_params = true;
       break;
