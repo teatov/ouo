@@ -1,11 +1,15 @@
 #ifndef TEST_H
 #define TEST_H
 
+#undef OUO_DEBUG
 #define OUO_IMPLEMENTATION
 #include "../src/ouo.h"
 
-#define _TEST_PASS _OUO_EBGRN "PASS" _OUO_ER
-#define _TEST_FAIL _OUO_EBRED "FAIL" _OUO_ER
+static int total = 0;
+static int passes = 0;
+
+#define _TEST_PASS OUO_EBGRN "PASS" OUO_ER
+#define _TEST_FAIL OUO_EBRED "FAIL" OUO_ER
 
 #define _ast_eq_assert(ast, expr, fmt, exp, got) \
   do { \
@@ -31,10 +35,11 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
 
   switch (exp->kind) {
     case OUO_AST_MODULE:
-      _ast_eq_assert(got, exp->module.count == got->module.count, "%zu",
-          exp->module.count, got->module.count);
-      for (size_t i = 0; i < exp->module.count; i++)
-        if (!_ast_eq(exp->module.items[i], got->module.items[i])) return false;
+    case OUO_AST_BLOCK:
+      _ast_eq_assert(got, exp->stmts.count == got->stmts.count, "%zu",
+          exp->stmts.count, got->stmts.count);
+      for (size_t i = 0; i < exp->stmts.count; i++)
+        if (!_ast_eq(exp->stmts.items[i], got->stmts.items[i])) return false;
       break;
     case OUO_AST_IDENT:
       _ast_eq_assert(got, _ouo_tok_eq(&exp->ident.name, &got->ident.name),
@@ -76,7 +81,7 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
   return true;
 }
 
-#define TN(name) _OUO_ED OUO_CODEPOS _OUO_ER name
+#define TN(name) OUO_ED OUO_CODEPOS OUO_ER name
 
 typedef struct {
   bool fail;
@@ -89,9 +94,11 @@ static inline void test(const char *name, const char *src, TestOptions *opt) {
   ouo_printdbg("%s: ", name);
   OuoParseResult p_res = {0};
   ouo_parse(src, &p_res);
+  bool pass = false;
 
   if (p_res.failed) {
-    ouo_printdbg(opt->fail ? _TEST_PASS : _TEST_FAIL);
+    pass = opt->fail;
+    ouo_printdbg(pass ? _TEST_PASS : _TEST_FAIL);
     ouo_printdbg("\n");
     if (!opt->fail) {
       OUO_DA_FOREACH(OuoError, err, &p_res.errors) {
@@ -104,7 +111,7 @@ static inline void test(const char *name, const char *src, TestOptions *opt) {
     OuoAst *exp_ast = opt->exp_ast != NULL
         ? opt->exp_ast
         : &(OuoAst){.kind = OUO_AST_MODULE,
-              .module = {
+              .stmts = {
                   .count = 1,
                   .items = &(OuoAst *){opt->exp_ast_stmt
                           ? opt->exp_ast_stmt
@@ -112,17 +119,33 @@ static inline void test(const char *name, const char *src, TestOptions *opt) {
                                 .expr_stmt = opt->exp_ast_expr}},
               }};
 
-    if (_ast_eq(exp_ast, p_res.ast)) ouo_printdbg(_TEST_PASS);
-    else ouo_ast_dump(p_res.ast);
+    if (_ast_eq(exp_ast, p_res.ast)) {
+      pass = true;
+      ouo_printdbg(_TEST_PASS);
+    } else ouo_ast_dump(p_res.ast);
     ouo_printdbg("\n");
   } else {
-    ouo_printdbg(opt->fail ? _TEST_FAIL : _TEST_PASS);
+    pass = !opt->fail;
+    ouo_printdbg(pass ? _TEST_PASS : _TEST_FAIL);
+    if (opt->fail) {
+      ouo_printdbg(" ");
+      ouo_ast_dump(p_res.ast);
+    }
     ouo_printdbg("\n");
   }
 
 parse_defer:
   ouo_ast_free(p_res.ast);
   ouo_da_free(p_res.errors);
+
+  total++;
+  if (pass) passes++;
+}
+
+static inline void test_print_total(void) {
+  ouo_printdbg("total: %d/%d ", passes, total);
+  ouo_printdbg(passes == total ? _TEST_PASS : _TEST_FAIL);
+  ouo_printdbg("\n");
 }
 
 #endif // TEST_H

@@ -36,10 +36,10 @@ typedef enum {
   JSON_ILLEGAL,
   JSON_EOF,
   // Punctuation
-  JSON_BRACE_OP,
-  JSON_BRACE_CL,
-  JSON_BRACKET_OP,
-  JSON_BRACKET_CL,
+  JSON_BRACE_OPN,
+  JSON_BRACE_CLS,
+  JSON_BRACKET_OPN,
+  JSON_BRACKET_CLS,
   JSON_COMMA,
   JSON_COLON,
   // Keywords
@@ -56,10 +56,10 @@ static const char *json_tok_str(JsonToken tok) {
     case JSON_ILLEGAL: return "ILLEGAL";
     case JSON_EOF: return "EOF";
     // Punctuation
-    case JSON_BRACE_OP: return "{";
-    case JSON_BRACE_CL: return "}";
-    case JSON_BRACKET_OP: return "[";
-    case JSON_BRACKET_CL: return "]";
+    case JSON_BRACE_OPN: return "{";
+    case JSON_BRACE_CLS: return "}";
+    case JSON_BRACKET_OPN: return "[";
+    case JSON_BRACKET_CLS: return "]";
     case JSON_COMMA: return ",";
     case JSON_COLON: return ":";
     // Keywords
@@ -193,10 +193,10 @@ static bool _jp_get(JsonParser *jp) {
 
   switch (c) {
     // Punctuation
-    case '{': jp->tok = JSON_BRACE_OP; break;
-    case '}': jp->tok = JSON_BRACE_CL; break;
-    case '[': jp->tok = JSON_BRACKET_OP; break;
-    case ']': jp->tok = JSON_BRACKET_CL; break;
+    case '{': jp->tok = JSON_BRACE_OPN; break;
+    case '}': jp->tok = JSON_BRACE_CLS; break;
+    case '[': jp->tok = JSON_BRACKET_OPN; break;
+    case ']': jp->tok = JSON_BRACKET_CLS; break;
     case ',': jp->tok = JSON_COMMA; break;
     case ':': jp->tok = JSON_COLON; break;
     // Keywords
@@ -252,11 +252,11 @@ static inline bool _jp_get_and_expect(JsonParser *jp, JsonToken tok) {
 }
 
 static inline bool jp_object_begin(JsonParser *jp) {
-  return _jp_get_and_expect(jp, JSON_BRACE_OP);
+  return _jp_get_and_expect(jp, JSON_BRACE_OPN);
 }
 
 static inline bool jp_object_end(JsonParser *jp) {
-  return _jp_get_and_expect(jp, JSON_BRACE_CL);
+  return _jp_get_and_expect(jp, JSON_BRACE_CLS);
 }
 
 static bool jp_object_member(JsonParser *jp) {
@@ -267,7 +267,7 @@ static bool jp_object_member(JsonParser *jp) {
     if (!_jp_get_and_expect(jp, JSON_COLON)) return false;
     return true;
   }
-  if (jp->tok == JSON_BRACE_CL) {
+  if (jp->tok == JSON_BRACE_CLS) {
     jp->curr = curr;
     return false;
   }
@@ -277,18 +277,18 @@ static bool jp_object_member(JsonParser *jp) {
 }
 
 static inline bool jp_array_begin(JsonParser *jp) {
-  return _jp_get_and_expect(jp, JSON_BRACKET_OP);
+  return _jp_get_and_expect(jp, JSON_BRACKET_OPN);
 }
 
 static inline bool jp_array_end(JsonParser *jp) {
-  return _jp_get_and_expect(jp, JSON_BRACKET_CL);
+  return _jp_get_and_expect(jp, JSON_BRACKET_CLS);
 }
 
 static bool jp_array_item(JsonParser *jp) {
   const char *curr = jp->curr;
   if (!_jp_get(jp)) return false;
   if (jp->tok == JSON_COMMA) return true;
-  if (jp->tok == JSON_BRACKET_CL) {
+  if (jp->tok == JSON_BRACKET_CLS) {
     jp->curr = curr;
     return false;
   }
@@ -307,11 +307,11 @@ static inline bool jp_number(JsonParser *jp) {
 static bool jp_skip(JsonParser *jp) {
   if (!_jp_get(jp)) return false;
   switch (jp->tok) {
-    case JSON_BRACE_OP:
+    case JSON_BRACE_OPN:
       while (jp_object_member(jp))
         if (!jp_skip(jp)) return false;
       return jp_object_end(jp);
-    case JSON_BRACKET_OP:
+    case JSON_BRACKET_OPN:
       while (jp_array_item(jp))
         if (!jp_skip(jp)) return false;
       return jp_array_end(jp);

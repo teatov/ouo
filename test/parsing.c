@@ -20,6 +20,11 @@ static inline void test_parse_exp_ast_stmt(
   test(name, src, &opt);
 }
 
+static inline void test_parse(const char *name, const char *src) {
+  TestOptions opt = {0};
+  test(name, src, &opt);
+}
+
 static inline void test_parse_fail(const char *msg, const char *src) {
   TestOptions opt = {.fail = true};
   test(msg, src, &opt);
@@ -27,17 +32,20 @@ static inline void test_parse_fail(const char *msg, const char *src) {
 
 int main(void) {
   test_parse_exp_ast(TN("empty string"), "",
-      &(OuoAst){.kind = OUO_AST_MODULE, .module = {.count = 0}});
+      &(OuoAst){.kind = OUO_AST_MODULE, .stmts = {.count = 0}});
 
   test_parse_exp_ast_expr(TN("identifier"), "ass",
       &(OuoAst){.kind = OUO_AST_IDENT,
           .ident = {
               .name = {.start = "ass", .len = 3},
           }});
+
   test_parse_exp_ast_expr(
       TN("single int"), "2", &(OuoAst){.kind = OUO_AST_LIT_INT, .lit_int = 2});
+
   test_parse_exp_ast_expr(TN("single float"), "2.5",
       &(OuoAst){.kind = OUO_AST_LIT_FLOAT, .lit_float = 2.5});
+
   test_parse_exp_ast_expr(TN("assign"), "a = 5",
       &(OuoAst){.kind = OUO_AST_ASSIGN,
           .assign = {.target = &(OuoAst){.kind = OUO_AST_IDENT,
@@ -46,6 +54,7 @@ int main(void) {
                                  .name = {.start = "a", .len = 1},
                              }},
               .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .lit_int = 5}}});
+
   test_parse_exp_ast_expr(TN("bin op"), "2 + 2",
       &(OuoAst){.kind = OUO_AST_BIN_OP,
           .bin_op = {.left = &(OuoAst){.kind = OUO_AST_LIT_INT, .lit_int = 2},
@@ -60,7 +69,9 @@ int main(void) {
   test_parse_fail(TN("unknown symbol fails"), "%");
   test_parse_fail(TN("single operator fails"), "+");
   test_parse_fail(TN("two numbers fails"), "2 2");
+  test_parse_fail(TN("two numbers fails newline"), "2 2\n");
   test_parse_fail(TN("unfinished bin op fails"), "2 +");
+  test_parse_fail(TN("unfinished bin op fails newline"), "\n2 +\n\n");
   test_parse_fail(TN("two operators fails"), "2 + +");
   test_parse_fail(TN("var decl without identifier fails"), "var");
   test_parse_fail(TN("var decl without '=' fails"), "var a");
@@ -77,5 +88,18 @@ int main(void) {
       "999999999999999999999999999999999999999999999999999999999999999999999999"
       "9999999999999999999999999999999999999999.0");
 
+  test_parse(TN("empty block"), "{}");
+  test_parse(TN("empty blocks"), "{{{}}}");
+  test_parse(TN("block + int"), "{}+1");
+  test_parse(TN("int + block"), "1+{}");
+  test_parse(TN("block with expr"), "{2+2}");
+  test_parse(TN("block with expr newlines"), "{\n\t2+2\n}");
+  test_parse(TN("blocks with expr newlines"), "{\n\t2+{\n\t2+2\n}\n}");
+
+  test_parse_fail(TN("unclosed block fails"), "{");
+  test_parse_fail(TN("unclosed blocks fails"), "{{{}");
+  test_parse_fail(TN("block extra closing brace fails"), "{}}");
+
+  test_print_total();
   return 0;
 }

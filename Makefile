@@ -10,10 +10,10 @@ TEST_SRCS=$(wildcard $(TEST)/*.c)
 TESTS=$(TEST_SRCS:.c=)
 
 CC = clang
-CFLAGS_DEBUG = -g3
+CFLAGS_DEBUG = -g3 -DOUO_DEBUG
 CFLAGS_RELEASE = -O3 -Werror
 CFLAGS += $(CFLAGS_$(ENV)) -std=c99 \
-	-Wall -Wextra -Wconversion -Wmissing-prototypes
+	-Wall -Wextra -Wconversion -Wmissing-prototypes -Wimplicit-fallthrough
 
 MAKEFLAGS += --no-print-directory
 
