@@ -1,12 +1,12 @@
 ## Variables
 
-- [ ] variable declarations
+- [x] variable declarations
 
 ```ouo
 var ass: int = 69
 ```
 
-- [ ] inferring types
+- [x] inferring types
 
 ```ouo
 var blast = 420

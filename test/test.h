@@ -46,6 +46,7 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
           "%.*s", _OUO_TOK_FMT_ARGS(exp->ident.name),
           _OUO_TOK_FMT_ARGS(got->ident.name));
       break;
+
     // Literals
     case OUO_AST_LIT_INT:
       _ast_eq_assert(got, exp->lit_int == got->lit_int, "%" OUO_PRId,
@@ -55,6 +56,7 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       _ast_eq_assert(got, exp->lit_float == got->lit_float, "%" OUO_PRIf,
           exp->lit_float, got->lit_float);
       break;
+
     // Expressions
     case OUO_AST_ASSIGN:
       if (!_ast_eq(exp->assign.target, got->assign.target)) return false;
@@ -66,6 +68,7 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       if (!_ast_eq(exp->bin_op.left, got->bin_op.left)) return false;
       if (!_ast_eq(exp->bin_op.right, got->bin_op.right)) return false;
       break;
+
     // Statements
     case OUO_AST_EXPR_STMT:
       if (!_ast_eq(exp->expr_stmt, got->expr_stmt)) return false;

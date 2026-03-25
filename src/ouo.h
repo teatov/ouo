@@ -201,7 +201,6 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path);
 #endif // ouo_float_t
 
 typedef enum {
-  // Indicates that no type checking happened yet
   OUO_TYPE_UNKNOWN,
   OUO_TYPE_VOID,
   // Scalar
@@ -220,6 +219,8 @@ typedef enum {
   OUO_TOK_IDENT,
   // Keywords
   OUO_TOK_KW_VAR,
+  OUO_TOK_KW_INT,
+  OUO_TOK_KW_FLOAT,
   // Literals
   OUO_TOK_LIT_INT,
   OUO_TOK_LIT_FLOAT,
@@ -232,6 +233,7 @@ typedef enum {
   OUO_TOK_PAREN_CLS,
   OUO_TOK_BRACE_OPN,
   OUO_TOK_BRACE_CLS,
+  OUO_TOK_COLON,
 } OuoTokenKind;
 
 typedef struct {
@@ -305,6 +307,7 @@ typedef struct OuoAst {
 
     struct {
       OuoToken name;
+      OuoTypeKind type;
       struct OuoAst *value;
     } decl_var;
   };
@@ -617,7 +620,7 @@ static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
   };
 }
 
-static inline OuoTokenKind _ouo_l_check_keyword(_OuoLexer *l, size_t rest_start,
+static inline OuoTokenKind _ouo_l_check_kw(_OuoLexer *l, size_t rest_start,
     size_t rest_len, const char *rest, OuoTokenKind tok) {
   if (l->curr - l->tok_start == (ptrdiff_t)(rest_start + rest_len) &&
       memcmp(l->tok_start + rest_start, rest, rest_len) == 0) {
@@ -632,7 +635,9 @@ static OuoToken _ouo_l_read_word(_OuoLexer *l) {
   OuoTokenKind kind = OUO_TOK_IDENT;
   char c = *l->tok_start;
   switch (c) {
-    case 'v': kind = _ouo_l_check_keyword(l, 1, 2, "ar", OUO_TOK_KW_VAR); break;
+    case 'v': kind = _ouo_l_check_kw(l, 1, 2, "ar", OUO_TOK_KW_VAR); break;
+    case 'i': kind = _ouo_l_check_kw(l, 1, 2, "nt", OUO_TOK_KW_INT); break;
+    case 'f': kind = _ouo_l_check_kw(l, 1, 4, "loat", OUO_TOK_KW_FLOAT); break;
   }
 
   return _ouo_l_tok_new(l, kind);
@@ -683,6 +688,7 @@ static OuoToken _ouo_l_next_token(_OuoLexer *l) {
     case ')': return _ouo_l_tok_new(l, OUO_TOK_PAREN_CLS);
     case '{': return _ouo_l_tok_new(l, OUO_TOK_BRACE_OPN);
     case '}': return _ouo_l_tok_new(l, OUO_TOK_BRACE_CLS);
+    case ':': return _ouo_l_tok_new(l, OUO_TOK_COLON);
     default: break;
   }
 
@@ -697,6 +703,8 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_IDENT: return "IDENTIFIER";
     // Keywords
     case OUO_TOK_KW_VAR: return "var";
+    case OUO_TOK_KW_INT: return "int";
+    case OUO_TOK_KW_FLOAT: return "float";
     // Literals
     case OUO_TOK_LIT_INT: return "LIT_INT";
     case OUO_TOK_LIT_FLOAT: return "LIT_FLOAT";
@@ -709,6 +717,7 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_PAREN_CLS: return ")";
     case OUO_TOK_BRACE_OPN: return "{";
     case OUO_TOK_BRACE_CLS: return "}";
+    case OUO_TOK_COLON: return ":";
   }
   return "";
 }
@@ -826,6 +835,17 @@ static OuoAst *_ouo_p_module(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_MODULE);
   _ouo_p_stmts(p, ast, OUO_TOK_EOF);
   return ast;
+}
+
+static inline OuoTypeKind _ouo_p_type(_OuoParser *p) {
+  switch (p->curr.kind) {
+    case OUO_TOK_KW_INT: return OUO_TYPE_INT;
+    case OUO_TOK_KW_FLOAT: return OUO_TYPE_FLOAT;
+    default:
+      _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Expected a type, got '%.*s'.",
+          _OUO_TOK_FMT_ARGS(p->curr));
+      return OUO_TYPE_UNKNOWN;
+  }
 }
 
 static inline const _OuoParseRule *_ouo_p_get_rule(
@@ -989,15 +1009,25 @@ static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
   OuoToken ident = p->curr;
   _ouo_p_advance(p);
 
+  OuoTypeKind type = OUO_TYPE_UNKNOWN;
+  if (p->curr.kind == OUO_TOK_COLON) {
+    _ouo_p_advance(p);
+    type = _ouo_p_type(p);
+    if (type == OUO_TYPE_UNKNOWN) return NULL;
+    _ouo_p_advance(p);
+  }
+
   if (p->curr.kind != OUO_TOK_ASSIGN) {
     _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Expected '%s', got '%.*s'.",
         _ouo_tok_kind_str(OUO_TOK_ASSIGN), _OUO_TOK_FMT_ARGS(p->curr));
     return NULL;
   }
 
+  OuoToken op = p->curr;
   _ouo_p_advance(p);
-  OuoAst *ast = _ouo_ast_new(&ident, OUO_AST_DECL_VAR);
+  OuoAst *ast = _ouo_ast_new(&op, OUO_AST_DECL_VAR);
   ast->decl_var.name = ident;
+  ast->decl_var.type = type;
   ast->decl_var.value = _ouo_p_expr(p, _OUO_PREC_LOWEST);
   return ast;
 }
@@ -1161,7 +1191,8 @@ void ouo_ast_dump(OuoAst *ast) {
     // Statements
     case OUO_AST_EXPR_STMT: ouo_ast_dump(ast->expr_stmt); break;
     case OUO_AST_DECL_VAR:
-      ouo_printdbg("%.*s ", _OUO_TOK_FMT_ARGS(ast->decl_var.name));
+      ouo_printdbg("%.*s %s ", _OUO_TOK_FMT_ARGS(ast->decl_var.name),
+          _ouo_type_kind_str(ast->decl_var.type));
       ouo_ast_dump(ast->decl_var.value);
       break;
   }
@@ -1226,20 +1257,26 @@ static inline bool _ouo_c_find_sym(
   return false;
 }
 
-static inline void _ouo_c_add_sym(
-    _OuoCompiler *c, OuoAst *ast, OuoSymbol *sym) {
-  if (c->res->symbols.count > UINT8_MAX) {
-    _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
-        "Maximum amount of symbols exceeded (max %d).", UINT8_MAX + 1);
-    return;
-  }
-
+static inline bool _ouo_c_sym_exists(
+    _OuoCompiler *c, OuoToken *tok, OuoSymbol *sym) {
   size_t sym_idx;
   if (_ouo_c_find_sym(c, &sym->name, &sym_idx)) {
-    _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
-        "Symbol '%.*s' is already defined.", _OUO_TOK_FMT_ARGS(sym->name));
+    _ouo_c_err(c, *tok, OUO_ERR_SEMANTIC, "Symbol '%.*s' is already defined.",
+        _OUO_TOK_FMT_ARGS(sym->name));
     _ouo_c_err_append(c, c->res->symbols.items[sym_idx].name, OUO_ERR_NOTE,
         "Previous definition here.");
+    return true;
+  }
+  return false;
+}
+
+static inline void _ouo_c_add_sym(
+    _OuoCompiler *c, OuoToken *tok, OuoSymbol *sym) {
+  if (sym->type == OUO_TYPE_UNKNOWN) return;
+
+  if (c->res->symbols.count > UINT8_MAX) {
+    _ouo_c_err(c, *tok, OUO_ERR_COMPILE_FAIL,
+        "Maximum amount of symbols exceeded (max %d).", UINT8_MAX + 1);
     return;
   }
 
@@ -1254,14 +1291,14 @@ static void _ouo_c_err_ident_undefined(_OuoCompiler *c, OuoAst *ast) {
       _OUO_TOK_FMT_ARGS(ast->ident.name));
 }
 
-static void _ouo_c_err_assign_target(_OuoCompiler *c, OuoAst *ast) {
-  _ouo_c_err(c, ast->tok, OUO_ERR_TYPE, "Cannot assign '%s' to '%s'.",
-      _ouo_type_kind_str(ast->assign.value->type),
-      _ouo_type_kind_str(ast->assign.target->type));
+static void _ouo_c_err_assign_type(
+    _OuoCompiler *c, OuoToken *tok, OuoTypeKind target, OuoTypeKind value) {
+  _ouo_c_err(c, *tok, OUO_ERR_TYPE, "Cannot assign '%s' to '%s'.",
+      _ouo_type_kind_str(value), _ouo_type_kind_str(target));
 }
 
-static void _ouo_c_err_assign_void(_OuoCompiler *c, OuoAst *ast) {
-  _ouo_c_err(c, ast->tok, OUO_ERR_TYPE, "A variabe cannot be '%s'.",
+static void _ouo_c_err_var_void(_OuoCompiler *c, OuoToken *tok) {
+  _ouo_c_err(c, *tok, OUO_ERR_TYPE, "A variabe cannot be '%s'.",
       _ouo_type_kind_str(OUO_TYPE_VOID));
 }
 
@@ -1309,7 +1346,8 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       switch (ast->assign.target->kind) {
         case OUO_AST_IDENT:
           if (ast->assign.value->type != ast->assign.target->type)
-            _ouo_c_err_assign_target(c, ast);
+            _ouo_c_err_assign_type(c, &ast->tok, ast->assign.target->type,
+                ast->assign.value->type);
           break;
 
         default: _ouo_c_err_assign_invalid(c, ast); break;
@@ -1336,13 +1374,31 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_EXPR_STMT: ast->type = ast->expr_stmt->type; break;
     case OUO_AST_DECL_VAR: {
       ast->type = OUO_TYPE_VOID;
-      if (ast->decl_var.value->type == OUO_TYPE_VOID)
-        _ouo_c_err_assign_void(c, ast);
+      bool failed = false;
+      bool panic_prev = c->panic_mode;
+      c->panic_mode = false;
+
+      if (ast->decl_var.value->type == OUO_TYPE_VOID ||
+          ast->decl_var.type == OUO_TYPE_VOID) {
+        _ouo_c_err_var_void(c, &ast->tok);
+        failed = true;
+      } else if (ast->decl_var.type != OUO_TYPE_UNKNOWN &&
+          ast->decl_var.value->type != OUO_TYPE_UNKNOWN &&
+          ast->decl_var.value->type != ast->decl_var.type) {
+        _ouo_c_err_assign_type(
+            c, &ast->tok, ast->decl_var.type, ast->decl_var.value->type);
+        failed = true;
+      } else if (ast->decl_var.value->type == OUO_TYPE_UNKNOWN) {
+        failed = true;
+      }
+
       OuoSymbol sym = {
           .name = ast->decl_var.name,
           .type = ast->decl_var.value->type,
       };
-      _ouo_c_add_sym(c, ast, &sym);
+      if (_ouo_c_sym_exists(c, &ast->decl_var.name, &sym)) failed = true;
+      if (!failed) _ouo_c_add_sym(c, &ast->decl_var.name, &sym);
+      c->panic_mode = panic_prev;
     } break;
   }
 }
@@ -1500,9 +1556,13 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
         new_scope = true;
         _ouo_c_scope_begin(c);
       }
+      bool panic_prev = c->panic_mode;
+      c->panic_mode = false;
       OUO_DA_FOREACH(OuoAst *, stmt, &ast->stmts) {
         _ouo_c_ast(c, *stmt, noemit);
+        c->panic_mode = false;
       }
+      c->panic_mode = panic_prev;
       break;
     case OUO_AST_IDENT: break;
     // Literals

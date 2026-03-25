@@ -7,6 +7,7 @@ languages, and myself.
 
 - Has ints and floats that you can add and multiply together. With type
   checking!
+- Variable declarations with type annotations.
 - Has a working LSP server that reports static analysis diagnostics.
 
 ### Milestones
