@@ -12,7 +12,7 @@ TESTS=$(TEST_SRCS:.c=)
 CC = clang
 CFLAGS_DEBUG = -g3 -DOUO_DEBUG
 CFLAGS_RELEASE = -O3 -Werror
-CFLAGS += $(CFLAGS_$(ENV)) -std=c99 \
+CFLAGS += $(CFLAGS_$(ENV)) -std=c99 -pedantic \
 	-Wall -Wextra -Wconversion -Wmissing-prototypes -Wimplicit-fallthrough
 
 MAKEFLAGS += --no-print-directory

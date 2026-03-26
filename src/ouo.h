@@ -22,30 +22,31 @@
 #define OUO_PP_STRINGIZE(X) OUO_STRINGIZE(X)
 #define OUO_CODEPOS __FILE__ ":" OUO_PP_STRINGIZE(__LINE__) ": "
 
-#define OUO_ER "\e[0m"
-#define OUO_EB "\e[1m"
-#define OUO_EBR "\e[0;1m"
-#define OUO_ED "\e[2m"
-#define OUO_EBD "\e[1;2m"
-#define OUO_EBRED "\e[1;31m"
-#define OUO_EBGRN "\e[1;32m"
+#define OUO_ER "\x1b[0m"
+#define OUO_EB "\x1b[1m"
+#define OUO_EBR "\x1b[0;1m"
+#define OUO_ED "\x1b[2m"
+#define OUO_EBD "\x1b[1;2m"
+#define OUO_EBRED "\x1b[1;31m"
+#define OUO_EBGRN "\x1b[1;32m"
 
-#define ouo_abort(err_code, fmt, ...) \
+#define ouo_abort(err_code, ...) \
   do { \
-    ouo_printerr(fmt "\n", ##__VA_ARGS__); \
+    ouo_printerr(__VA_ARGS__); \
+    ouo_printerr("\n"); \
     exit(err_code); \
   } while (0)
 
 // Assertions
 
-#define ouo_assert(expr, err_code, fmt, ...) \
-  if (!(expr)) ouo_abort(err_code, fmt, ##__VA_ARGS__)
+#define ouo_assert(expr, err_code, ...) \
+  if (!(expr)) ouo_abort(err_code, __VA_ARGS__)
 
-#define ouo_assertf(expr, err_code, fmt, ...) \
+#define ouo_assertf(expr, err_code, ...) \
   do { \
     if (!(expr)) { \
       ouo_printtrc(); \
-      ouo_abort(err_code, fmt, ##__VA_ARGS__); \
+      ouo_abort(err_code, __VA_ARGS__); \
     } \
   } while (0)
 
@@ -332,7 +333,7 @@ typedef struct OuoAst {
       OuoTypeKind type_annotation;
       struct OuoAst *value;
     } decl_var;
-  };
+  } k;
 } OuoAst;
 
 /// Owns memory for `ast` and `errors.items`.
@@ -461,7 +462,7 @@ typedef struct OuoObject {
     ouo_int_t v_int;
     ouo_float_t v_float;
     bool v_bool;
-  };
+  } k;
 } OuoObject;
 
 #define OUO_VM_STACK_SIZE 256
@@ -493,8 +494,8 @@ void ouo_interpret(OuoChunk *chunk, OuoInterpretResult *res);
 // Error handling
 //
 
-#define _ouo_err_sprintf(err, fmt, ...) \
-  snprintf((err).msg, OUO_ERRMSG_SIZE, fmt, ##__VA_ARGS__)
+#define _ouo_err_sprintf(err, ...) \
+  snprintf((err).msg, OUO_ERRMSG_SIZE, __VA_ARGS__)
 
 static const char *_ouo_err_code_str(OuoErrorCode err_code) {
   switch (err_code) {
@@ -822,7 +823,7 @@ typedef struct _OuoParseRule {
   _OuoPrecedence prec;
 } _OuoParseRule;
 
-#define _ouo_p_err_append(p, tok, err_code, fmt, ...) \
+#define _ouo_p_err_append(p, tok, err_code, ...) \
   do { \
     OuoError err = { \
         .code = (err_code), \
@@ -832,16 +833,16 @@ typedef struct _OuoParseRule {
         .line_start = (tok).line_start, \
         .msg = {0}, \
     }; \
-    _ouo_err_sprintf(err, fmt, ##__VA_ARGS__); \
+    _ouo_err_sprintf(err, __VA_ARGS__); \
     ouo_da_append(&(p)->res->errors, err); \
   } while (0)
 
-#define _ouo_p_err(p, tok, err_code, fmt, ...) \
+#define _ouo_p_err(p, tok, err_code, ...) \
   do { \
     if (!(p)->panic_mode) { \
       (p)->res->failed = true; \
       (p)->panic_mode = true; \
-      _ouo_p_err_append(p, tok, err_code, fmt, ##__VA_ARGS__); \
+      _ouo_p_err_append(p, tok, err_code, __VA_ARGS__); \
     } \
   } while (0)
 
@@ -956,8 +957,8 @@ static OuoAst *_ouo_p_expr(_OuoParser *p, _OuoPrecedence prec) {
 
 static OuoAst *_ouo_p_ident(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_IDENT);
-  ast->ident.name = p->curr;
-  ast->ident.sym_idx = SIZE_MAX;
+  ast->k.ident.name = p->curr;
+  ast->k.ident.sym_idx = SIZE_MAX;
   return ast;
 }
 
@@ -982,7 +983,7 @@ static OuoAst *_ouo_p_lit_int(_OuoParser *p) {
   }
 
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_LIT_INT);
-  ast->lit_int = lit;
+  ast->k.lit_int = lit;
   return ast;
 }
 
@@ -1005,13 +1006,13 @@ static OuoAst *_ouo_p_lit_float(_OuoParser *p) {
   }
 
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_LIT_FLOAT);
-  ast->lit_float = lit;
+  ast->k.lit_float = lit;
   return ast;
 }
 
 static OuoAst *_ouo_p_lit_bool(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_LIT_BOOL);
-  ast->lit_bool = p->curr.kind == OUO_TOK_LIT_TRUE;
+  ast->k.lit_bool = p->curr.kind == OUO_TOK_LIT_TRUE;
   return ast;
 }
 
@@ -1021,8 +1022,8 @@ static OuoAst *_ouo_p_assign(_OuoParser *p, OuoAst *left) {
   OuoAst *right = _ouo_p_expr(p, _OUO_PREC_LOWEST);
 
   OuoAst *ast = _ouo_ast_new(&op, OUO_AST_ASSIGN);
-  ast->assign.target = left;
-  ast->assign.value = right;
+  ast->k.assign.target = left;
+  ast->k.assign.value = right;
   return ast;
 }
 
@@ -1033,9 +1034,9 @@ static OuoAst *_ouo_p_bin_op(_OuoParser *p, OuoAst *left) {
   OuoAst *right = _ouo_p_expr(p, prec);
 
   OuoAst *ast = _ouo_ast_new(&op, OUO_AST_BIN_OP);
-  ast->bin_op.left = left;
-  ast->bin_op.op = op.kind;
-  ast->bin_op.right = right;
+  ast->k.bin_op.left = left;
+  ast->k.bin_op.op = op.kind;
+  ast->k.bin_op.right = right;
   return ast;
 }
 
@@ -1084,9 +1085,9 @@ static OuoAst *_ouo_p_block(_OuoParser *p) {
 
 static OuoAst *_ouo_p_if(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_IF);
-  ast->if_expr.condition = NULL;
-  ast->if_expr.then_branch = NULL;
-  ast->if_expr.else_branch = NULL;
+  ast->k.if_expr.condition = NULL;
+  ast->k.if_expr.then_branch = NULL;
+  ast->k.if_expr.else_branch = NULL;
 
   _ouo_p_advance(p);
   if (p->curr.kind != OUO_TOK_PAREN_OPN) {
@@ -1098,7 +1099,7 @@ static OuoAst *_ouo_p_if(_OuoParser *p) {
   p->ignore_newline = true;
 
   _ouo_p_advance(p);
-  ast->if_expr.condition = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  ast->k.if_expr.condition = _ouo_p_expr(p, _OUO_PREC_LOWEST);
 
   p->ignore_newline = ignore_newline_prev;
   _ouo_p_advance(p);
@@ -1108,12 +1109,12 @@ static OuoAst *_ouo_p_if(_OuoParser *p) {
   }
 
   _ouo_p_advance(p);
-  ast->if_expr.then_branch = _ouo_p_stmt(p, false);
+  ast->k.if_expr.then_branch = _ouo_p_stmt(p, false);
 
   if (p->peek.kind == OUO_TOK_KW_ELSE) {
     _ouo_p_advance(p);
     _ouo_p_advance(p);
-    ast->if_expr.else_branch = _ouo_p_stmt(p, false);
+    ast->k.if_expr.else_branch = _ouo_p_stmt(p, false);
   }
 
   return ast;
@@ -1121,20 +1122,20 @@ static OuoAst *_ouo_p_if(_OuoParser *p) {
 
 static OuoAst *_ouo_p_expr_stmt(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_EXPR_STMT);
-  ast->child = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  ast->k.child = _ouo_p_expr(p, _OUO_PREC_LOWEST);
   return ast;
 }
 
 static OuoAst *_ouo_p_print(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_PRINT);
   _ouo_p_advance(p);
-  ast->child = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  ast->k.child = _ouo_p_expr(p, _OUO_PREC_LOWEST);
   return ast;
 }
 
 static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_DECL_VAR);
-  ast->decl_var.value = NULL;
+  ast->k.decl_var.value = NULL;
 
   _ouo_p_advance(p);
   if (p->curr.kind != OUO_TOK_IDENT) {
@@ -1161,9 +1162,9 @@ static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
 
   ast->tok = p->curr;
   _ouo_p_advance(p);
-  ast->decl_var.name = ident;
-  ast->decl_var.type_annotation = type;
-  ast->decl_var.value = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  ast->k.decl_var.name = ident;
+  ast->k.decl_var.type_annotation = type;
+  ast->k.decl_var.value = _ouo_p_expr(p, _OUO_PREC_LOWEST);
   return ast;
 }
 
@@ -1259,22 +1260,22 @@ void ouo_ast_free(OuoAst *ast) {
     case OUO_AST_LIT_BOOL: break;
     // Expressions
     case OUO_AST_ASSIGN:
-      ouo_ast_free(ast->assign.target);
-      ouo_ast_free(ast->assign.value);
+      ouo_ast_free(ast->k.assign.target);
+      ouo_ast_free(ast->k.assign.value);
       break;
     case OUO_AST_BIN_OP:
-      ouo_ast_free(ast->bin_op.left);
-      ouo_ast_free(ast->bin_op.right);
+      ouo_ast_free(ast->k.bin_op.left);
+      ouo_ast_free(ast->k.bin_op.right);
       break;
     case OUO_AST_IF:
-      ouo_ast_free(ast->if_expr.condition);
-      ouo_ast_free(ast->if_expr.then_branch);
-      ouo_ast_free(ast->if_expr.else_branch);
+      ouo_ast_free(ast->k.if_expr.condition);
+      ouo_ast_free(ast->k.if_expr.then_branch);
+      ouo_ast_free(ast->k.if_expr.else_branch);
       break;
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: ouo_ast_free(ast->child); break;
-    case OUO_AST_DECL_VAR: ouo_ast_free(ast->decl_var.value); break;
+    case OUO_AST_PRINT: ouo_ast_free(ast->k.child); break;
+    case OUO_AST_DECL_VAR: ouo_ast_free(ast->k.decl_var.value); break;
   }
 
   ouo_free(ast);
@@ -1321,41 +1322,41 @@ void ouo_ast_dump(OuoAst *ast) {
       }
       break;
     case OUO_AST_IDENT:
-      ouo_printdbg("%.*s", _OUO_TOK_FMT_ARGS(ast->ident.name));
+      ouo_printdbg("%.*s", _OUO_TOK_FMT_ARGS(ast->k.ident.name));
       break;
     // Literals
-    case OUO_AST_LIT_INT: ouo_printdbg("%" OUO_PRId, ast->lit_int); break;
-    case OUO_AST_LIT_FLOAT: ouo_printdbg("%" OUO_PRIf, ast->lit_float); break;
+    case OUO_AST_LIT_INT: ouo_printdbg("%" OUO_PRId, ast->k.lit_int); break;
+    case OUO_AST_LIT_FLOAT: ouo_printdbg("%" OUO_PRIf, ast->k.lit_float); break;
     case OUO_AST_LIT_BOOL:
-      ouo_printdbg(ast->lit_bool ? "true" : "false");
+      ouo_printdbg(ast->k.lit_bool ? "true" : "false");
       break;
     // Expressions
     case OUO_AST_ASSIGN:
-      ouo_ast_dump(ast->assign.target);
+      ouo_ast_dump(ast->k.assign.target);
       ouo_printdbg(" %s ", _ouo_tok_kind_str(OUO_TOK_ASSIGN));
-      ouo_ast_dump(ast->assign.value);
+      ouo_ast_dump(ast->k.assign.value);
       break;
     case OUO_AST_BIN_OP:
-      ouo_ast_dump(ast->bin_op.left);
-      ouo_printdbg(" %s ", _ouo_tok_kind_str(ast->bin_op.op));
-      ouo_ast_dump(ast->bin_op.right);
+      ouo_ast_dump(ast->k.bin_op.left);
+      ouo_printdbg(" %s ", _ouo_tok_kind_str(ast->k.bin_op.op));
+      ouo_ast_dump(ast->k.bin_op.right);
       break;
     case OUO_AST_IF:
-      ouo_ast_dump(ast->if_expr.condition);
+      ouo_ast_dump(ast->k.if_expr.condition);
       ouo_printdbg(" then ");
-      ouo_ast_dump(ast->if_expr.then_branch);
-      if (ast->if_expr.else_branch != NULL) {
+      ouo_ast_dump(ast->k.if_expr.then_branch);
+      if (ast->k.if_expr.else_branch != NULL) {
         ouo_printdbg(" else ");
-        ouo_ast_dump(ast->if_expr.else_branch);
+        ouo_ast_dump(ast->k.if_expr.else_branch);
       }
       break;
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: ouo_ast_dump(ast->child); break;
+    case OUO_AST_PRINT: ouo_ast_dump(ast->k.child); break;
     case OUO_AST_DECL_VAR:
-      ouo_printdbg("%.*s %s ", _OUO_TOK_FMT_ARGS(ast->decl_var.name),
-          _ouo_type_kind_str(ast->decl_var.type_annotation));
-      ouo_ast_dump(ast->decl_var.value);
+      ouo_printdbg("%.*s %s ", _OUO_TOK_FMT_ARGS(ast->k.decl_var.name),
+          _ouo_type_kind_str(ast->k.decl_var.type_annotation));
+      ouo_ast_dump(ast->k.decl_var.value);
       break;
   }
 
@@ -1374,7 +1375,7 @@ typedef struct {
   OuoCompileResult *res;
 } _OuoCompiler;
 
-#define _ouo_c_err_append(c, tok, err_code, fmt, ...) \
+#define _ouo_c_err_append(c, tok, err_code, ...) \
   do { \
     OuoError err = { \
         .code = (err_code), \
@@ -1384,16 +1385,16 @@ typedef struct {
         .line_start = (tok).line_start, \
         .msg = {0}, \
     }; \
-    _ouo_err_sprintf(err, fmt, ##__VA_ARGS__); \
+    _ouo_err_sprintf(err, __VA_ARGS__); \
     ouo_da_append(&(c)->res->errors, err); \
   } while (0)
 
-#define _ouo_c_err(c, tok, err_code, fmt, ...) \
+#define _ouo_c_err(c, tok, err_code, ...) \
   do { \
     if (!(c)->panic_mode) { \
       (c)->res->failed = true; \
       (c)->panic_mode = true; \
-      _ouo_c_err_append(c, tok, err_code, fmt, ##__VA_ARGS__); \
+      _ouo_c_err_append(c, tok, err_code, __VA_ARGS__); \
     } \
   } while (0)
 
@@ -1452,7 +1453,7 @@ static inline void _ouo_c_add_sym(
 
 static void _ouo_c_err_ident_undefined(_OuoCompiler *c, OuoAst *ast) {
   _ouo_c_err(c, ast->tok, OUO_ERR_SEMANTIC, "Undefined symbol '%.*s'.",
-      _OUO_TOK_FMT_ARGS(ast->ident.name));
+      _OUO_TOK_FMT_ARGS(ast->k.ident.name));
 }
 
 static void _ouo_c_err_assign_type(
@@ -1469,21 +1470,21 @@ static void _ouo_c_err_assign_invalid(_OuoCompiler *c, OuoAst *ast) {
 static void _ouo_c_err_bin_op_type(_OuoCompiler *c, OuoAst *ast) {
   _ouo_c_err(c, ast->tok, OUO_ERR_TYPE,
       "Operation '%s' does not support '%s' and '%s'.",
-      _ouo_tok_kind_str(ast->bin_op.op),
-      _ouo_type_kind_str(ast->bin_op.left->type),
-      _ouo_type_kind_str(ast->bin_op.right->type));
+      _ouo_tok_kind_str(ast->k.bin_op.op),
+      _ouo_type_kind_str(ast->k.bin_op.left->type),
+      _ouo_type_kind_str(ast->k.bin_op.right->type));
 }
 
 static void _ouo_c_err_bin_op_unknown(_OuoCompiler *c, OuoAst *ast) {
   _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL, "Unknown binary operator '%s'.",
-      _ouo_tok_kind_str(ast->bin_op.op));
+      _ouo_tok_kind_str(ast->k.bin_op.op));
 }
 
 static void _ouo_c_err_if_condition_type(_OuoCompiler *c, OuoAst *ast) {
-  _ouo_c_err(c, ast->if_expr.condition->tok, OUO_ERR_TYPE,
+  _ouo_c_err(c, ast->k.if_expr.condition->tok, OUO_ERR_TYPE,
       "Condition can only be '%s', got '%s'.",
       _ouo_type_kind_str(OUO_TYPE_BOOL),
-      _ouo_type_kind_str(ast->if_expr.condition->type));
+      _ouo_type_kind_str(ast->k.if_expr.condition->type));
 }
 
 static void _ouo_c_err_if_branch_type(_OuoCompiler *c, OuoAst *ast,
@@ -1506,7 +1507,7 @@ static void _ouo_c_err_var_void(_OuoCompiler *c, OuoToken *tok) {
 }
 
 static inline bool _ouo_ast_bin_op_is(OuoAst *ast, OuoTypeKind type) {
-  return ast->bin_op.left->type == type && ast->bin_op.right->type == type;
+  return ast->k.bin_op.left->type == type && ast->k.bin_op.right->type == type;
 }
 
 static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
@@ -1514,9 +1515,9 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_MODULE: ast->type = OUO_TYPE_VOID; break;
     case OUO_AST_IDENT: {
       size_t sym_idx;
-      if (_ouo_c_find_sym(c, &ast->ident.name, &sym_idx)) {
+      if (_ouo_c_find_sym(c, &ast->k.ident.name, &sym_idx)) {
         ast->type = c->res->symbols.items[sym_idx].type;
-        ast->ident.sym_idx = sym_idx;
+        ast->k.ident.sym_idx = sym_idx;
       } else _ouo_c_err_ident_undefined(c, ast);
       break;
     }
@@ -1529,18 +1530,18 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     // Expressions
     case OUO_AST_ASSIGN: {
       ast->type = OUO_TYPE_VOID;
-      switch (ast->assign.target->kind) {
+      switch (ast->k.assign.target->kind) {
         case OUO_AST_IDENT:
-          if (ast->assign.value->type != ast->assign.target->type)
-            _ouo_c_err_assign_type(c, &ast->tok, ast->assign.target->type,
-                ast->assign.value->type);
+          if (ast->k.assign.value->type != ast->k.assign.target->type)
+            _ouo_c_err_assign_type(c, &ast->tok, ast->k.assign.target->type,
+                ast->k.assign.value->type);
           break;
         default: _ouo_c_err_assign_invalid(c, ast); break;
       }
       break;
     }
     case OUO_AST_BIN_OP:
-      switch (ast->bin_op.op) {
+      switch (ast->k.bin_op.op) {
         // Arithmetic
         case OUO_TOK_PLUS:
         case OUO_TOK_ASTERISK:
@@ -1556,24 +1557,26 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_BLOCK: ast->type = OUO_TYPE_VOID; break;
     case OUO_AST_IF:
       ast->type = OUO_TYPE_VOID;
-      if (ast->if_expr.condition->type != OUO_TYPE_BOOL)
+      if (ast->k.if_expr.condition->type != OUO_TYPE_BOOL)
         _ouo_c_err_if_condition_type(c, ast);
-      if (ast->if_expr.else_branch != NULL &&
-          ast->if_expr.then_branch->type == ast->if_expr.else_branch->type) {
-        ast->type = ast->if_expr.then_branch->type;
-      } else if (ast->if_expr.then_branch->type != OUO_TYPE_VOID ||
-          ast->if_expr.else_branch != NULL)
-        _ouo_c_err_if_branch_type(c, ast, ast->if_expr.then_branch->type,
-            ast->if_expr.else_branch != NULL ? ast->if_expr.else_branch->type
-                                             : OUO_TYPE_VOID);
+      if (ast->k.if_expr.else_branch != NULL &&
+          ast->k.if_expr.then_branch->type ==
+              ast->k.if_expr.else_branch->type) {
+        ast->type = ast->k.if_expr.then_branch->type;
+      } else if (ast->k.if_expr.then_branch->type != OUO_TYPE_VOID ||
+          ast->k.if_expr.else_branch != NULL)
+        _ouo_c_err_if_branch_type(c, ast, ast->k.if_expr.then_branch->type,
+            ast->k.if_expr.else_branch != NULL
+                ? ast->k.if_expr.else_branch->type
+                : OUO_TYPE_VOID);
       break;
 
     // Statements
-    case OUO_AST_EXPR_STMT: ast->type = ast->child->type; break;
+    case OUO_AST_EXPR_STMT: ast->type = ast->k.child->type; break;
     case OUO_AST_PRINT:
       ast->type = OUO_TYPE_VOID;
-      if (ast->child->type == OUO_TYPE_VOID)
-        _ouo_c_err_stmt_type(c, &ast->tok, ast->child->type);
+      if (ast->k.child->type == OUO_TYPE_VOID)
+        _ouo_c_err_stmt_type(c, &ast->tok, ast->k.child->type);
       break;
     case OUO_AST_DECL_VAR: {
       ast->type = OUO_TYPE_VOID;
@@ -1581,26 +1584,27 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       bool panic_prev = c->panic_mode;
       c->panic_mode = false;
 
-      if (ast->decl_var.value->type == OUO_TYPE_VOID ||
-          ast->decl_var.type_annotation == OUO_TYPE_VOID) {
+      if (ast->k.decl_var.value->type == OUO_TYPE_VOID ||
+          ast->k.decl_var.type_annotation == OUO_TYPE_VOID) {
         _ouo_c_err_var_void(c, &ast->tok);
         failed = true;
-      } else if (ast->decl_var.type_annotation != OUO_TYPE_UNKNOWN &&
-          ast->decl_var.value->type != OUO_TYPE_UNKNOWN &&
-          ast->decl_var.value->type != ast->decl_var.type_annotation) {
-        _ouo_c_err_assign_type(c, &ast->tok, ast->decl_var.type_annotation,
-            ast->decl_var.value->type);
+      } else if (ast->k.decl_var.type_annotation != OUO_TYPE_UNKNOWN &&
+          ast->k.decl_var.value->type != OUO_TYPE_UNKNOWN &&
+          ast->k.decl_var.value->type != ast->k.decl_var.type_annotation) {
+        _ouo_c_err_assign_type(c, &ast->tok, ast->k.decl_var.type_annotation,
+            ast->k.decl_var.value->type);
         failed = true;
-      } else if (ast->decl_var.value->type == OUO_TYPE_UNKNOWN) {
+      } else if (ast->k.decl_var.value->type == OUO_TYPE_UNKNOWN) {
         failed = true;
       }
 
       OuoSymbol sym = {
-          .name = ast->decl_var.name,
-          .type = ast->decl_var.value->type,
+          .name = ast->k.decl_var.name,
+          .type = ast->k.decl_var.value->type,
       };
-      if (_ouo_c_sym_check_defined(c, &ast->decl_var.name, &sym)) failed = true;
-      if (!failed) _ouo_c_add_sym(c, &ast->decl_var.name, &sym);
+      if (_ouo_c_sym_check_defined(c, &ast->k.decl_var.name, &sym))
+        failed = true;
+      if (!failed) _ouo_c_add_sym(c, &ast->k.decl_var.name, &sym);
       c->panic_mode = panic_prev;
     } break;
   }
@@ -1686,7 +1690,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
   switch (ast->kind) {
     case OUO_AST_MODULE: break;
     case OUO_AST_IDENT:
-      _ouo_c_emit_bytes(c, ast, OUO_OP_VAR_GET, (uint8_t)ast->ident.sym_idx);
+      _ouo_c_emit_bytes(c, ast, OUO_OP_VAR_GET, (uint8_t)ast->k.ident.sym_idx);
       break;
 
     // Literals
@@ -1694,36 +1698,36 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
       _ouo_c_emit_lit(c, ast,
           &(OuoObject){
               .kind = OUO_OBJ_INT,
-              .v_int = ast->lit_int,
+              .k.v_int = ast->k.lit_int,
           });
       break;
     case OUO_AST_LIT_FLOAT:
       _ouo_c_emit_lit(c, ast,
           &(OuoObject){
               .kind = OUO_OBJ_FLOAT,
-              .v_float = ast->lit_float,
+              .k.v_float = ast->k.lit_float,
           });
       break;
     case OUO_AST_LIT_BOOL:
       _ouo_c_emit_lit(c, ast,
           &(OuoObject){
               .kind = OUO_OBJ_BOOL,
-              .v_bool = ast->lit_bool,
+              .k.v_bool = ast->k.lit_bool,
           });
       break;
 
     // Expressions
     case OUO_AST_ASSIGN:
-      switch (ast->assign.target->kind) {
+      switch (ast->k.assign.target->kind) {
         case OUO_AST_IDENT:
           _ouo_c_emit_bytes(c, ast, OUO_OP_VAR_SET,
-              (uint8_t)ast->assign.target->ident.sym_idx);
+              (uint8_t)ast->k.assign.target->k.ident.sym_idx);
           break;
         default: _ouo_c_err_assign_invalid(c, ast); break;
       }
       break;
     case OUO_AST_BIN_OP:
-      switch (ast->bin_op.op) {
+      switch (ast->k.bin_op.op) {
         // Arithmetic
         case OUO_TOK_PLUS:
           if (_ouo_ast_bin_op_is(ast, OUO_TYPE_INT))
@@ -1811,15 +1815,15 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
     case OUO_AST_LIT_BOOL: break;
     // Expressions
     case OUO_AST_ASSIGN:
-      _ouo_c_ast(c, ast->assign.target, true);
-      _ouo_c_ast(c, ast->assign.value, noemit);
+      _ouo_c_ast(c, ast->k.assign.target, true);
+      _ouo_c_ast(c, ast->k.assign.value, noemit);
       break;
     case OUO_AST_BIN_OP:
-      _ouo_c_ast(c, ast->bin_op.left, noemit);
-      _ouo_c_ast(c, ast->bin_op.right, noemit);
+      _ouo_c_ast(c, ast->k.bin_op.left, noemit);
+      _ouo_c_ast(c, ast->k.bin_op.right, noemit);
       break;
     case OUO_AST_IF: {
-      _ouo_c_ast(c, ast->if_expr.condition, noemit);
+      _ouo_c_ast(c, ast->k.if_expr.condition, noemit);
 
 #ifndef OUO_NOEMIT
       size_t then_jump = _ouo_c_emit_jump(c, ast, OUO_OP_JUMP_IF_FALSE);
@@ -1827,8 +1831,8 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
 #endif
 
       _ouo_c_scope_begin(c);
-      ast->if_expr.then_branch->nopop = true;
-      _ouo_c_ast(c, ast->if_expr.then_branch, noemit);
+      ast->k.if_expr.then_branch->nopop = true;
+      _ouo_c_ast(c, ast->k.if_expr.then_branch, noemit);
       _ouo_c_scope_end(c, ast);
 
 #ifndef OUO_NOEMIT
@@ -1837,10 +1841,10 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
       _ouo_c_emit_byte(c, ast, OUO_OP_POP);
 #endif
 
-      if (ast->if_expr.else_branch != NULL) {
+      if (ast->k.if_expr.else_branch != NULL) {
         _ouo_c_scope_begin(c);
-        ast->if_expr.else_branch->nopop = true;
-        _ouo_c_ast(c, ast->if_expr.else_branch, noemit);
+        ast->k.if_expr.else_branch->nopop = true;
+        _ouo_c_ast(c, ast->k.if_expr.else_branch, noemit);
         _ouo_c_scope_end(c, ast);
       }
 
@@ -1851,8 +1855,8 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
     }
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: _ouo_c_ast(c, ast->child, noemit); break;
-    case OUO_AST_DECL_VAR: _ouo_c_ast(c, ast->decl_var.value, noemit); break;
+    case OUO_AST_PRINT: _ouo_c_ast(c, ast->k.child, noemit); break;
+    case OUO_AST_DECL_VAR: _ouo_c_ast(c, ast->k.decl_var.value, noemit); break;
   }
 
   _ouo_c_ast_analyze(c, ast);
@@ -1896,9 +1900,9 @@ void ouo_chunk_free(OuoChunk *chunk) {
 
 static inline void _ouo_obj_print(OuoObject *obj) {
   switch (obj->kind) {
-    case OUO_OBJ_INT: ouo_print("%" OUO_PRId, obj->v_int); break;
-    case OUO_OBJ_FLOAT: ouo_print("%" OUO_PRIf, obj->v_float); break;
-    case OUO_OBJ_BOOL: ouo_print(obj->v_bool ? "true" : "false"); break;
+    case OUO_OBJ_INT: ouo_print("%" OUO_PRId, obj->k.v_int); break;
+    case OUO_OBJ_FLOAT: ouo_print("%" OUO_PRIf, obj->k.v_float); break;
+    case OUO_OBJ_BOOL: ouo_print(obj->k.v_bool ? "true" : "false"); break;
   }
 }
 
@@ -2014,7 +2018,7 @@ typedef struct {
   OuoInterpretResult *res;
 } _OuoVm;
 
-#define _ouo_vm_err(vm, ip, err_code, fmt, ...) \
+#define _ouo_vm_err(vm, ip, err_code, ...) \
   do { \
     (vm)->res->failed = true; \
     OuoError error = { \
@@ -2023,7 +2027,7 @@ typedef struct {
         .line_start = NULL, \
         .msg = {0}, \
     }; \
-    _ouo_err_sprintf(error, fmt, ##__VA_ARGS__); \
+    _ouo_err_sprintf(error, __VA_ARGS__); \
     (vm)->res->error = error; \
   } while (0)
 
@@ -2067,17 +2071,9 @@ static inline OuoObject *_ouo_vm_stack_peek(
   return &vm->res->stack.items[vm->res->stack.count - offset - 1];
 }
 
-#define _ouo_obj_new_int(v) \
-  ((OuoObject){ \
-      .kind = OUO_OBJ_INT, \
-      .v_int = (v), \
-  })
-
+#define _ouo_obj_new_int(v) ((OuoObject){.kind = OUO_OBJ_INT, .k.v_int = (v)})
 #define _ouo_obj_new_float(v) \
-  ((OuoObject){ \
-      .kind = OUO_OBJ_FLOAT, \
-      .v_float = (v), \
-  })
+  ((OuoObject){.kind = OUO_OBJ_FLOAT, .k.v_float = (v)})
 
 #define _ouo_vm_read_byte(ip) *(++(ip))
 #define _ouo_vm_read_bytes(ip) (ip += 2, (uint16_t)((ip[-1] << 8) | ip[0]))
@@ -2087,8 +2083,8 @@ static inline OuoObject *_ouo_vm_stack_peek(
 
 #define _OUO_VM_BIN_OP(vm, ip, T, OP) \
   do { \
-    ouo_##T##_t b = _ouo_vm_stack_pop((vm), (ip))->v_##T; \
-    ouo_##T##_t a = _ouo_vm_stack_pop((vm), (ip))->v_##T; \
+    ouo_##T##_t b = _ouo_vm_stack_pop((vm), (ip))->k.v_##T; \
+    ouo_##T##_t a = _ouo_vm_stack_pop((vm), (ip))->k.v_##T; \
     _ouo_vm_stack_push((vm), (ip), &_ouo_obj_new_##T(a OP b)); \
   } while (0)
 
@@ -2135,7 +2131,7 @@ static void _ouo_vm_run(_OuoVm *vm) {
       }
       case OUO_OP_JUMP_IF_FALSE: {
         uint16_t jump = _ouo_vm_read_bytes(ip);
-        if (!_ouo_vm_stack_peek(vm, ip, 0)->v_bool) ip += jump;
+        if (!_ouo_vm_stack_peek(vm, ip, 0)->k.v_bool) ip += jump;
         break;
       }
       case OUO_OP_RETURN: _ouo_vm_stack_pop(vm, ip); return;

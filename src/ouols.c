@@ -145,11 +145,12 @@ static inline void _jp_init(JsonParser *jp, const char *src) {
   jp->failed = false;
 }
 
-#define _jp_err(jp, fmt, ...) \
+#define _jp_err(jp, ...) \
   do { \
     if (!(jp)->failed) { \
       (jp)->failed = true; \
-      ouo_printerr("JSON PARSING ERROR: " fmt "\n", ##__VA_ARGS__); \
+      ouo_printerr("JSON PARSING ERROR: " __VA_ARGS__); \
+      ouo_printerr("\n"); \
     } \
   } while (0)
 
@@ -362,8 +363,11 @@ typedef struct {
   } scopes;
 } JsonSerializer;
 
-#define _js_err(jp, fmt, ...) \
-  ouo_printerr("JSON SERIALIZATION ERROR: " fmt "\n", ##__VA_ARGS__)
+#define _js_err(jp, ...) \
+  do { \
+    ouo_printerr("JSON SERIALIZATION ERROR: " __VA_ARGS__); \
+    ouo_printerr("\n"); \
+  } while (0)
 
 static inline void _js_init(JsonSerializer *js) {
   js->items = NULL;
