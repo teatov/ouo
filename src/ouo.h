@@ -891,14 +891,14 @@ static OuoAst *_ouo_p_stmt(_OuoParser *p, bool exp_newline);
 
 static void _ouo_p_stmts(_OuoParser *p, OuoAst *ast, OuoTokenKind end_tok) {
   while (p->curr.kind != OUO_TOK_EOF) {
-    if (p->peek.kind == end_tok) return;
+    if (p->curr.kind == end_tok) return;
     if (p->curr.kind == OUO_TOK_NEWLINE) {
       _ouo_p_advance(p);
       continue;
     }
     OuoAst *stmt = _ouo_p_stmt(p, true);
     if (stmt != NULL) ouo_da_append(&ast->children, stmt);
-    if (p->peek.kind != end_tok) _ouo_p_advance(p);
+    _ouo_p_advance(p);
   }
 }
 
@@ -1067,19 +1067,18 @@ static OuoAst *_ouo_p_block(_OuoParser *p) {
 
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_BLOCK);
 
-  if (p->peek.kind != OUO_TOK_BRACE_CLS) _ouo_p_advance(p);
+  _ouo_p_advance(p);
   _ouo_p_stmts(p, ast, OUO_TOK_BRACE_CLS);
 
   p->ignore_newline = ignore_newline_prev;
-  if (p->peek.kind != OUO_TOK_BRACE_CLS) {
+  if (p->curr.kind != OUO_TOK_BRACE_CLS) {
     bool panic_prev = p->panic_mode;
-    _ouo_p_err_unexpected(p, p->peek, OUO_TOK_BRACE_CLS);
+    _ouo_p_err_unexpected(p, p->curr, OUO_TOK_BRACE_CLS);
     if (!panic_prev)
       _ouo_p_err_append(p, ast->tok, OUO_ERR_NOTE, "Block starts here.");
     return ast;
   }
 
-  _ouo_p_advance(p);
   return ast;
 }
 
@@ -1187,8 +1186,7 @@ static OuoAst *_ouo_p_stmt(_OuoParser *p, bool exp_newline) {
   }
 
   if (exp_newline && p->peek.kind != OUO_TOK_EOF &&
-      p->peek.kind != OUO_TOK_NEWLINE && p->peek.kind != OUO_TOK_BRACE_CLS &&
-      p->peek.kind != OUO_TOK_KW_ELSE) {
+      p->peek.kind != OUO_TOK_NEWLINE && p->peek.kind != OUO_TOK_BRACE_CLS) {
     _ouo_p_err(p, p->peek, OUO_ERR_SYNTAX, "Expected a new line, got '%.*s'.",
         _OUO_TOK_FMT_ARGS(p->peek));
   } else if (exp_newline && p->peek.kind == OUO_TOK_NEWLINE) {
@@ -1556,14 +1554,13 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       break;
     case OUO_AST_BLOCK: ast->type = OUO_TYPE_VOID; break;
     case OUO_AST_IF:
-      ast->type = OUO_TYPE_VOID;
       if (ast->k.if_expr.condition->type != OUO_TYPE_BOOL)
         _ouo_c_err_if_condition_type(c, ast);
+
       if (ast->k.if_expr.else_branch != NULL &&
-          ast->k.if_expr.then_branch->type ==
-              ast->k.if_expr.else_branch->type) {
+          ast->k.if_expr.then_branch->type == ast->k.if_expr.else_branch->type)
         ast->type = ast->k.if_expr.then_branch->type;
-      } else if (ast->k.if_expr.then_branch->type != OUO_TYPE_VOID ||
+      else if (ast->k.if_expr.then_branch->type != OUO_TYPE_VOID ||
           ast->k.if_expr.else_branch != NULL)
         _ouo_c_err_if_branch_type(c, ast, ast->k.if_expr.then_branch->type,
             ast->k.if_expr.else_branch != NULL
