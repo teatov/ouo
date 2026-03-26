@@ -25,8 +25,7 @@ FILE *log_file;
     } \
   } while (0)
 
-#define ouo_printdbg(...) ouo_printerr(__VA_ARGS__)
-
+#undef OUO_DEBUG
 #define OUO_DA_INIT_CAPACITY 128
 #define OUO_NOEMIT
 #define OUO_IMPLEMENTATION
@@ -511,7 +510,7 @@ static inline void _ls_init(OuoLs *ls, JsonParser *jp, JsonSerializer *js) {
 }
 
 static inline void _ls_begin(OuoLs *ls) {
-  ouo_printdbg("\n// Send:\n");
+  ouo_printerr("\n// Send:\n");
   js_object_begin(ls->js);
   {
     js_object_member(ls->js, "jsonrpc");
@@ -543,7 +542,7 @@ static inline void _ls_end(OuoLs *ls) {
   fflush(stdout);
   ouo_da_free(ls->js->scopes);
   ouo_da_free(*ls->js);
-  ouo_printdbg("// Flushed!\n");
+  ouo_printerr("// Flushed!\n");
 }
 
 static void _ls_diagnostic(OuoLs *ls, OuoError *err) {
@@ -731,17 +730,17 @@ static bool _ls_handle_method(OuoLs *ls) {
 
   if (json_strcmp(&ls->method, "initialized")) {
     ls->initialized = true;
-    ouo_printdbg("client initialized!\n");
+    ouo_printerr("client initialized!\n");
   }
 
   if (json_strcmp(&ls->method, "shutdown")) {
     ls->shutdown = true;
-    ouo_printdbg("shutdown!\n");
+    ouo_printerr("shutdown!\n");
   }
 
   if (json_strcmp(&ls->method, "exit")) {
     ls->exit = true;
-    ouo_printdbg("exit!\n");
+    ouo_printerr("exit!\n");
   }
 
   if (ls->has_params) {
@@ -802,17 +801,21 @@ static void ls_handle(OuoLs *ls, const char *body) {
   _ls_init(ls, &jp, &js);
 
   bool result = _ls_handle_request(ls);
-  if (!result) ouo_printdbg("GOT ERRORS!\n");
+  if (!result) ouo_printerr("GOT ERRORS!\n");
 }
 
 int main(int argc, const char **argv) {
   log_file = NULL;
-  if (argc == 3 && strcmp(argv[1], "--log") == 0) {
+  if (argc > 1) {
+    if (argc != 3 || strcmp(argv[1], "--log") != 0) {
+      ouo_printerr("Usage: ouo [--log PATH]\n");
+      return OUO_ERR_USAGE;
+    }
     log_file = fopen(argv[2], "w");
     if (log_file == NULL) ouo_printerr("%s: %s.", argv[2], strerror(errno));
   }
 
-  ouo_printdbg("ouols starting...\n");
+  ouo_printerr("ouols starting...\n");
   OuoLs ls = {0};
 
   for (;;) {
@@ -832,7 +835,7 @@ int main(int argc, const char **argv) {
       continue;
     }
 
-    ouo_printdbg("\n// Receive:\nContent-Length: %lu\n\n", content_len);
+    ouo_printerr("\n// Receive:\nContent-Length: %lu\n\n", content_len);
 
     char *body = ouo_malloc(content_len + 1);
     ouo_assert_nomem(body);
@@ -843,14 +846,14 @@ int main(int argc, const char **argv) {
     }
     body[content_len] = '\0';
 
-    ouo_printdbg("%s\n", body);
+    ouo_printerr("%s\n", body);
 
     ls_handle(&ls, body);
 
     ouo_free(body);
   }
 
-  ouo_printdbg("\ndone!\n");
+  ouo_printerr("\ndone!\n");
   if (log_file != NULL) fclose(log_file);
-  return 0;
+  return OUO_OK;
 }

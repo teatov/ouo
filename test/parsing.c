@@ -32,7 +32,7 @@ static inline void test_parse_fail(const char *msg, const char *src) {
 
 int main(void) {
   test_parse_exp_ast(TN("empty string"), "",
-      &(OuoAst){.kind = OUO_AST_MODULE, .stmts = {.count = 0}});
+      &(OuoAst){.kind = OUO_AST_MODULE, .children = {.count = 0}});
 
   test_parse_exp_ast_expr(TN("identifier"), "ass",
       &(OuoAst){.kind = OUO_AST_IDENT,
