@@ -749,7 +749,7 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_ILLEGAL: return "ILLEGAL";
     case OUO_TOK_EOF: return "EOF";
     case OUO_TOK_NEWLINE: return "NEWLINE";
-    case OUO_TOK_IDENT: return "IDENTIFIER";
+    case OUO_TOK_IDENT: return "IDENT";
     // Keywords
     case OUO_TOK_KW_INT: return "int";
     case OUO_TOK_KW_FLOAT: return "float";
@@ -794,6 +794,7 @@ typedef struct {
   _OuoLexer *l;
   OuoToken curr;
   OuoToken peek;
+  bool ignore_newline;
 
   bool panic_mode;
   OuoParseResult *res;
@@ -851,6 +852,13 @@ typedef struct _OuoParseRule {
 static inline void _ouo_p_advance(_OuoParser *p) {
   p->curr = p->peek;
   p->peek = _ouo_l_next_token(p->l);
+  if (p->ignore_newline) {
+    while (p->curr.kind == OUO_TOK_NEWLINE) {
+      p->curr = p->peek;
+      p->peek = _ouo_l_next_token(p->l);
+    }
+    while (p->peek.kind == OUO_TOK_NEWLINE) p->peek = _ouo_l_next_token(p->l);
+  }
 }
 
 static inline void _ouo_p_init(_OuoParser *p, _OuoLexer *l, OuoParseResult *res,
@@ -881,14 +889,15 @@ static inline OuoAst *_ouo_ast_new(OuoToken *tok, OuoAstKind kind) {
 static OuoAst *_ouo_p_stmt(_OuoParser *p, bool exp_newline);
 
 static void _ouo_p_stmts(_OuoParser *p, OuoAst *ast, OuoTokenKind end_tok) {
-  while (p->curr.kind != OUO_TOK_EOF && p->curr.kind != end_tok) {
+  while (p->curr.kind != OUO_TOK_EOF) {
+    if (p->peek.kind == end_tok) return;
     if (p->curr.kind == OUO_TOK_NEWLINE) {
       _ouo_p_advance(p);
       continue;
     }
     OuoAst *stmt = _ouo_p_stmt(p, true);
     if (stmt != NULL) ouo_da_append(&ast->children, stmt);
-    _ouo_p_advance(p);
+    if (p->peek.kind != end_tok) _ouo_p_advance(p);
   }
 }
 
@@ -1031,10 +1040,14 @@ static OuoAst *_ouo_p_bin_op(_OuoParser *p, OuoAst *left) {
 }
 
 static OuoAst *_ouo_p_grouping(_OuoParser *p) {
+  bool ignore_newline_prev = p->ignore_newline;
+  p->ignore_newline = true;
+
   OuoToken tok = p->curr;
   _ouo_p_advance(p);
   OuoAst *ast = _ouo_p_expr(p, _OUO_PREC_LOWEST);
 
+  p->ignore_newline = ignore_newline_prev;
   if (p->peek.kind != OUO_TOK_PAREN_CLS) {
     bool panic_prev = p->panic_mode;
     _ouo_p_err_unexpected(p, p->peek, OUO_TOK_PAREN_CLS);
@@ -1044,22 +1057,28 @@ static OuoAst *_ouo_p_grouping(_OuoParser *p) {
   }
 
   _ouo_p_advance(p);
-
   return ast;
 }
 
 static OuoAst *_ouo_p_block(_OuoParser *p) {
+  bool ignore_newline_prev = p->ignore_newline;
+  p->ignore_newline = false;
+
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_BLOCK);
-  _ouo_p_advance(p);
+
+  if (p->peek.kind != OUO_TOK_BRACE_CLS) _ouo_p_advance(p);
   _ouo_p_stmts(p, ast, OUO_TOK_BRACE_CLS);
 
-  if (p->curr.kind != OUO_TOK_BRACE_CLS) {
+  p->ignore_newline = ignore_newline_prev;
+  if (p->peek.kind != OUO_TOK_BRACE_CLS) {
     bool panic_prev = p->panic_mode;
-    _ouo_p_err_unexpected(p, p->curr, OUO_TOK_BRACE_CLS);
+    _ouo_p_err_unexpected(p, p->peek, OUO_TOK_BRACE_CLS);
     if (!panic_prev)
       _ouo_p_err_append(p, ast->tok, OUO_ERR_NOTE, "Block starts here.");
+    return ast;
   }
 
+  _ouo_p_advance(p);
   return ast;
 }
 
@@ -1075,9 +1094,13 @@ static OuoAst *_ouo_p_if(_OuoParser *p) {
     return ast;
   }
 
+  bool ignore_newline_prev = p->ignore_newline;
+  p->ignore_newline = true;
+
   _ouo_p_advance(p);
   ast->if_expr.condition = _ouo_p_expr(p, _OUO_PREC_LOWEST);
 
+  p->ignore_newline = ignore_newline_prev;
   _ouo_p_advance(p);
   if (p->curr.kind != OUO_TOK_PAREN_CLS) {
     _ouo_p_err_unexpected(p, p->curr, OUO_TOK_PAREN_CLS);
@@ -1147,7 +1170,7 @@ static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
 static void _ouo_p_synchronize(_OuoParser *p) {
   p->panic_mode = false;
   while (p->peek.kind != OUO_TOK_EOF) {
-    if (p->curr.kind == OUO_TOK_NEWLINE || p->curr.kind == OUO_TOK_BRACE_OPN ||
+    if (p->curr.kind == OUO_TOK_NEWLINE || p->peek.kind == OUO_TOK_BRACE_OPN ||
         p->peek.kind == OUO_TOK_BRACE_CLS)
       return;
     _ouo_p_advance(p);
@@ -1167,6 +1190,8 @@ static OuoAst *_ouo_p_stmt(_OuoParser *p, bool exp_newline) {
       p->peek.kind != OUO_TOK_KW_ELSE) {
     _ouo_p_err(p, p->peek, OUO_ERR_SYNTAX, "Expected a new line, got '%.*s'.",
         _OUO_TOK_FMT_ARGS(p->peek));
+  } else if (exp_newline && p->peek.kind == OUO_TOK_NEWLINE) {
+    _ouo_p_advance(p);
   }
 
   if (p->panic_mode) _ouo_p_synchronize(p);
@@ -1461,12 +1486,12 @@ static void _ouo_c_err_if_condition_type(_OuoCompiler *c, OuoAst *ast) {
       _ouo_type_kind_str(ast->if_expr.condition->type));
 }
 
-static void _ouo_c_err_if_branch_type(_OuoCompiler *c, OuoAst *ast) {
+static void _ouo_c_err_if_branch_type(_OuoCompiler *c, OuoAst *ast,
+    OuoTypeKind then_type, OuoTypeKind else_type) {
   _ouo_c_err(c, ast->tok, OUO_ERR_TYPE,
       "All branches must evaluate to the same type (then is '%s', else is "
       "'%s').",
-      _ouo_type_kind_str(ast->if_expr.then_branch->type),
-      _ouo_type_kind_str(ast->if_expr.else_branch->type));
+      _ouo_type_kind_str(then_type), _ouo_type_kind_str(else_type));
 }
 
 static void _ouo_c_err_stmt_type(
@@ -1538,7 +1563,9 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
         ast->type = ast->if_expr.then_branch->type;
       } else if (ast->if_expr.then_branch->type != OUO_TYPE_VOID ||
           ast->if_expr.else_branch != NULL)
-        _ouo_c_err_if_branch_type(c, ast);
+        _ouo_c_err_if_branch_type(c, ast, ast->if_expr.then_branch->type,
+            ast->if_expr.else_branch != NULL ? ast->if_expr.else_branch->type
+                                             : OUO_TYPE_VOID);
       break;
 
     // Statements

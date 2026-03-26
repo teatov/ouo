@@ -36,9 +36,7 @@ int main(void) {
 
   test_parse_exp_ast_expr(TN("identifier"), "ass",
       &(OuoAst){.kind = OUO_AST_IDENT,
-          .ident = {
-              .name = {.start = "ass", .len = 3},
-          }});
+          .ident = {.name = {.start = "ass", .len = 3}}});
 
   test_parse_exp_ast_expr(
       TN("single int"), "2", &(OuoAst){.kind = OUO_AST_LIT_INT, .lit_int = 2});
@@ -49,10 +47,7 @@ int main(void) {
   test_parse_exp_ast_expr(TN("assign"), "a = 5",
       &(OuoAst){.kind = OUO_AST_ASSIGN,
           .assign = {.target = &(OuoAst){.kind = OUO_AST_IDENT,
-                         .ident =
-                             {
-                                 .name = {.start = "a", .len = 1},
-                             }},
+                         .ident = {.name = {.start = "a", .len = 1}}},
               .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .lit_int = 5}}});
 
   test_parse_exp_ast_expr(TN("bin op"), "2 + 2",

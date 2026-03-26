@@ -21,6 +21,7 @@ static int passes = 0;
   } while (0)
 
 static bool _ast_eq(OuoAst *exp, OuoAst *got) {
+  if (exp == NULL && got == NULL) return true;
   if (exp == NULL) {
     ouo_printerr("exp is NULL\n");
     return false;
@@ -56,6 +57,10 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       _ast_eq_assert(got, exp->lit_float == got->lit_float, "%" OUO_PRIf,
           exp->lit_float, got->lit_float);
       break;
+    case OUO_AST_LIT_BOOL:
+      _ast_eq_assert(got, exp->lit_bool == got->lit_bool, "%d", exp->lit_bool,
+          got->lit_bool);
+      break;
 
     // Expressions
     case OUO_AST_ASSIGN:
@@ -67,6 +72,14 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
           _ouo_tok_kind_str(exp->bin_op.op), _ouo_tok_kind_str(got->bin_op.op));
       if (!_ast_eq(exp->bin_op.left, got->bin_op.left)) return false;
       if (!_ast_eq(exp->bin_op.right, got->bin_op.right)) return false;
+      break;
+    case OUO_AST_IF:
+      if (!_ast_eq(exp->if_expr.condition, got->if_expr.condition))
+        return false;
+      if (!_ast_eq(exp->if_expr.then_branch, got->if_expr.then_branch))
+        return false;
+      if (!_ast_eq(exp->if_expr.else_branch, got->if_expr.else_branch))
+        return false;
       break;
 
     // Statements
