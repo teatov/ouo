@@ -208,6 +208,7 @@ typedef enum {
   // Scalar
   OUO_TYPE_INT,
   OUO_TYPE_FLOAT,
+  OUO_TYPE_BOOL,
 } OuoTypeKind;
 
 //
@@ -224,9 +225,12 @@ typedef enum {
   OUO_TOK_KW_VAR,
   OUO_TOK_KW_INT,
   OUO_TOK_KW_FLOAT,
+  OUO_TOK_KW_BOOL,
   // Literals
   OUO_TOK_LIT_INT,
   OUO_TOK_LIT_FLOAT,
+  OUO_TOK_LIT_TRUE,
+  OUO_TOK_LIT_FALSE,
   // Operators
   OUO_TOK_ASSIGN,
   OUO_TOK_PLUS,
@@ -263,6 +267,7 @@ typedef enum {
   // Literals
   OUO_AST_LIT_INT,
   OUO_AST_LIT_FLOAT,
+  OUO_AST_LIT_BOOL,
   // Expressions
   OUO_AST_ASSIGN,
   OUO_AST_BIN_OP,
@@ -297,6 +302,7 @@ typedef struct OuoAst {
     // Literals
     ouo_int_t lit_int;
     ouo_float_t lit_float;
+    bool lit_bool;
 
     // Expressions
     struct {
@@ -431,6 +437,7 @@ typedef enum {
   // Pass by value
   OUO_OBJ_INT,
   OUO_OBJ_FLOAT,
+  OUO_OBJ_BOOL,
 } OuoObjectKind;
 
 typedef struct OuoObject {
@@ -440,6 +447,7 @@ typedef struct OuoObject {
     // Pass by value
     ouo_int_t v_int;
     ouo_float_t v_float;
+    bool v_bool;
   };
 } OuoObject;
 
@@ -550,6 +558,7 @@ static const char *_ouo_type_kind_str(OuoTypeKind kind) {
     // Scalar
     case OUO_TYPE_INT: return "int";
     case OUO_TYPE_FLOAT: return "float";
+    case OUO_TYPE_BOOL: return "bool";
   }
   return "";
 }
@@ -630,28 +639,36 @@ static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
   };
 }
 
-static inline OuoTokenKind _ouo_l_check_kw(_OuoLexer *l, size_t rest_start,
-    size_t rest_len, const char *rest, OuoTokenKind tok) {
+static inline OuoToken _ouo_l_check_kw(_OuoLexer *l, size_t rest_start,
+    size_t rest_len, const char *rest, OuoTokenKind kind) {
   if (l->curr - l->tok_start == (ptrdiff_t)(rest_start + rest_len) &&
       memcmp(l->tok_start + rest_start, rest, rest_len) == 0) {
-    return tok;
+    return _ouo_l_tok_new(l, kind);
   }
-  return OUO_TOK_IDENT;
+  return _ouo_l_tok_new(l, OUO_TOK_IDENT);
 }
 
 static OuoToken _ouo_l_read_word(_OuoLexer *l) {
   while (_ouo_l_isalpha(_ouo_l_peek(l))) _ouo_l_advance(l);
 
-  OuoTokenKind kind = OUO_TOK_IDENT;
-  char c = *l->tok_start;
-  switch (c) {
-    case 'v': kind = _ouo_l_check_kw(l, 1, 2, "ar", OUO_TOK_KW_VAR); break;
-    case 'p': kind = _ouo_l_check_kw(l, 1, 4, "rint", OUO_TOK_KW_PRINT); break;
-    case 'i': kind = _ouo_l_check_kw(l, 1, 2, "nt", OUO_TOK_KW_INT); break;
-    case 'f': kind = _ouo_l_check_kw(l, 1, 4, "loat", OUO_TOK_KW_FLOAT); break;
+  bool is_long = l->curr - l->tok_start > 1;
+  switch (l->tok_start[0]) {
+    case 'v': return _ouo_l_check_kw(l, 1, 2, "ar", OUO_TOK_KW_VAR);
+    case 'p': return _ouo_l_check_kw(l, 1, 4, "rint", OUO_TOK_KW_PRINT);
+    case 'i': return _ouo_l_check_kw(l, 1, 2, "nt", OUO_TOK_KW_INT);
+    case 'f':
+      if (is_long) {
+        switch (l->tok_start[1]) {
+          case 'l': return _ouo_l_check_kw(l, 2, 3, "oat", OUO_TOK_KW_FLOAT);
+          case 'a': return _ouo_l_check_kw(l, 2, 3, "lse", OUO_TOK_LIT_FALSE);
+        }
+      }
+      break;
+    case 'b': return _ouo_l_check_kw(l, 1, 3, "ool", OUO_TOK_KW_BOOL);
+    case 't': return _ouo_l_check_kw(l, 1, 3, "rue", OUO_TOK_LIT_TRUE);
   }
 
-  return _ouo_l_tok_new(l, kind);
+  return _ouo_l_tok_new(l, OUO_TOK_IDENT);
 }
 
 static OuoToken _ouo_l_read_number(_OuoLexer *l) {
@@ -717,9 +734,12 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_KW_PRINT: return "print";
     case OUO_TOK_KW_INT: return "int";
     case OUO_TOK_KW_FLOAT: return "float";
+    case OUO_TOK_KW_BOOL: return "bool";
     // Literals
     case OUO_TOK_LIT_INT: return "LIT_INT";
     case OUO_TOK_LIT_FLOAT: return "LIT_FLOAT";
+    case OUO_TOK_LIT_TRUE: return "true";
+    case OUO_TOK_LIT_FALSE: return "false";
     // Operators
     case OUO_TOK_ASSIGN: return "=";
     case OUO_TOK_PLUS: return "+";
@@ -855,6 +875,7 @@ static inline OuoTypeKind _ouo_p_type(_OuoParser *p) {
   switch (p->curr.kind) {
     case OUO_TOK_KW_INT: return OUO_TYPE_INT;
     case OUO_TOK_KW_FLOAT: return OUO_TYPE_FLOAT;
+    case OUO_TOK_KW_BOOL: return OUO_TYPE_BOOL;
     default:
       _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Expected a type, got '%.*s'.",
           _OUO_TOK_FMT_ARGS(p->curr));
@@ -865,7 +886,8 @@ static inline OuoTypeKind _ouo_p_type(_OuoParser *p) {
 static inline const _OuoParseRule *_ouo_p_get_rule(
     _OuoParser *p, OuoTokenKind tok) {
   if (tok >= p->rules.count) return &p->rules.items[OUO_TOK_ILLEGAL];
-  return &p->rules.items[tok];
+  const _OuoParseRule *rule = &p->rules.items[tok];
+  return rule;
 }
 
 static OuoAst *_ouo_p_expr(_OuoParser *p, _OuoPrecedence prec) {
@@ -951,6 +973,12 @@ static OuoAst *_ouo_p_lit_float(_OuoParser *p) {
   return ast;
 }
 
+static OuoAst *_ouo_p_lit_bool(_OuoParser *p) {
+  OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_LIT_BOOL);
+  ast->lit_bool = p->curr.kind == OUO_TOK_LIT_TRUE;
+  return ast;
+}
+
 static OuoAst *_ouo_p_assign(_OuoParser *p, OuoAst *left) {
   OuoToken op = p->curr;
   _ouo_p_advance(p);
@@ -981,9 +1009,11 @@ static OuoAst *_ouo_p_grouping(_OuoParser *p) {
   OuoAst *ast = _ouo_p_expr(p, _OUO_PREC_LOWEST);
 
   if (p->peek.kind != OUO_TOK_PAREN_CLS) {
+    bool panic_prev = p->panic_mode;
     _ouo_p_err(p, p->peek, OUO_ERR_SYNTAX, "Expected '%s', got '%.*s'.",
         _ouo_tok_kind_str(OUO_TOK_PAREN_CLS), _OUO_TOK_FMT_ARGS(p->peek));
-    _ouo_p_err_append(p, tok, OUO_ERR_NOTE, "Grouping starts here.");
+    if (!panic_prev)
+      _ouo_p_err_append(p, tok, OUO_ERR_NOTE, "Grouping starts here.");
   } else {
     _ouo_p_advance(p);
   }
@@ -997,9 +1027,11 @@ static OuoAst *_ouo_p_block(_OuoParser *p) {
   _ouo_p_stmts(p, ast, OUO_TOK_BRACE_CLS);
 
   if (p->curr.kind != OUO_TOK_BRACE_CLS) {
+    bool panic_prev = p->panic_mode;
     _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Expected '%s', got '%.*s'.",
         _ouo_tok_kind_str(OUO_TOK_BRACE_CLS), _OUO_TOK_FMT_ARGS(p->curr));
-    _ouo_p_err_append(p, ast->tok, OUO_ERR_NOTE, "Block starts here.");
+    if (!panic_prev)
+      _ouo_p_err_append(p, ast->tok, OUO_ERR_NOTE, "Block starts here.");
   }
 
   return ast;
@@ -1020,11 +1052,13 @@ static OuoAst *_ouo_p_print(_OuoParser *p) {
 }
 
 static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
+  OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_DECL_VAR);
+
   _ouo_p_advance(p);
   if (p->curr.kind != OUO_TOK_IDENT) {
     _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX,
         "Expected an identifier, got '%.*s'.", _OUO_TOK_FMT_ARGS(p->curr));
-    return NULL;
+    return ast;
   }
 
   OuoToken ident = p->curr;
@@ -1034,19 +1068,18 @@ static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
   if (p->curr.kind == OUO_TOK_COLON) {
     _ouo_p_advance(p);
     type = _ouo_p_type(p);
-    if (type == OUO_TYPE_UNKNOWN) return NULL;
+    if (type == OUO_TYPE_UNKNOWN) return ast;
     _ouo_p_advance(p);
   }
 
   if (p->curr.kind != OUO_TOK_ASSIGN) {
     _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Expected '%s', got '%.*s'.",
         _ouo_tok_kind_str(OUO_TOK_ASSIGN), _OUO_TOK_FMT_ARGS(p->curr));
-    return NULL;
+    return ast;
   }
 
-  OuoToken tok = p->curr;
+  ast->tok = p->curr;
   _ouo_p_advance(p);
-  OuoAst *ast = _ouo_ast_new(&tok, OUO_AST_DECL_VAR);
   ast->decl_var.name = ident;
   ast->decl_var.type_annotation = type;
   ast->decl_var.value = _ouo_p_expr(p, _OUO_PREC_LOWEST);
@@ -1056,14 +1089,10 @@ static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
 static void _ouo_p_synchronize(_OuoParser *p) {
   p->panic_mode = false;
   while (p->peek.kind != OUO_TOK_EOF) {
-    if (p->curr.kind == OUO_TOK_NEWLINE || p->curr.kind == OUO_TOK_BRACE_OPN)
+    if (p->curr.kind == OUO_TOK_NEWLINE || p->curr.kind == OUO_TOK_BRACE_OPN ||
+        p->peek.kind == OUO_TOK_BRACE_CLS)
       return;
-    switch (p->peek.kind) {
-      case OUO_TOK_KW_PRINT:
-      case OUO_TOK_KW_VAR:
-      case OUO_TOK_BRACE_CLS: return;
-      default: _ouo_p_advance(p); break;
-    }
+    _ouo_p_advance(p);
   }
 }
 
@@ -1077,14 +1106,8 @@ static OuoAst *_ouo_p_stmt(_OuoParser *p) {
 
   if (p->peek.kind != OUO_TOK_EOF && p->peek.kind != OUO_TOK_NEWLINE &&
       p->peek.kind != OUO_TOK_BRACE_CLS) {
-    if (ast->kind == OUO_AST_EXPR_STMT) {
-      _ouo_p_err(p, p->peek, OUO_ERR_SYNTAX,
-          "Expected an operator or a new line, got '%.*s'.",
-          _OUO_TOK_FMT_ARGS(p->peek));
-    } else {
-      _ouo_p_err(p, p->peek, OUO_ERR_SYNTAX, "Expected a new line, got '%.*s'.",
-          _OUO_TOK_FMT_ARGS(p->peek));
-    }
+    _ouo_p_err(p, p->peek, OUO_ERR_SYNTAX, "Expected a new line, got '%.*s'.",
+        _OUO_TOK_FMT_ARGS(p->peek));
   }
 
   if (p->panic_mode) _ouo_p_synchronize(p);
@@ -1098,6 +1121,8 @@ static const _OuoParseRule _ouo_p_rules[] = {
     // Literals
     [OUO_TOK_LIT_INT] = {_ouo_p_lit_int, NULL, _OUO_PREC_LOWEST},
     [OUO_TOK_LIT_FLOAT] = {_ouo_p_lit_float, NULL, _OUO_PREC_LOWEST},
+    [OUO_TOK_LIT_TRUE] = {_ouo_p_lit_bool, NULL, _OUO_PREC_LOWEST},
+    [OUO_TOK_LIT_FALSE] = {_ouo_p_lit_bool, NULL, _OUO_PREC_LOWEST},
     // Operators
     [OUO_TOK_ASSIGN] = {NULL, _ouo_p_assign, _OUO_PREC_ASSIGN},
     [OUO_TOK_PLUS] = {NULL, _ouo_p_bin_op, _OUO_PREC_SUM},
@@ -1145,7 +1170,8 @@ void ouo_ast_free(OuoAst *ast) {
     case OUO_AST_IDENT: break;
     // Literals
     case OUO_AST_LIT_INT:
-    case OUO_AST_LIT_FLOAT: break;
+    case OUO_AST_LIT_FLOAT:
+    case OUO_AST_LIT_BOOL: break;
     // Expressions
     case OUO_AST_ASSIGN:
       ouo_ast_free(ast->assign.target);
@@ -1173,6 +1199,7 @@ static const char *_ouo_ast_kind_str(OuoAstKind kind) {
     // Literals
     case OUO_AST_LIT_INT: return "LIT_INT";
     case OUO_AST_LIT_FLOAT: return "LIT_FLOAT";
+    case OUO_AST_LIT_BOOL: return "LIT_BOOL";
     // Expressions
     case OUO_AST_ASSIGN: return "ASSIGN";
     case OUO_AST_BIN_OP: return "BIN_OP";
@@ -1208,6 +1235,9 @@ void ouo_ast_dump(OuoAst *ast) {
     // Literals
     case OUO_AST_LIT_INT: ouo_printdbg("%" OUO_PRId, ast->lit_int); break;
     case OUO_AST_LIT_FLOAT: ouo_printdbg("%" OUO_PRIf, ast->lit_float); break;
+    case OUO_AST_LIT_BOOL:
+      ouo_printdbg(ast->lit_bool ? "true" : "false");
+      break;
     // Expressions
     case OUO_AST_ASSIGN:
       ouo_ast_dump(ast->assign.target);
@@ -1379,6 +1409,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     // Literals
     case OUO_AST_LIT_INT: ast->type = OUO_TYPE_INT; break;
     case OUO_AST_LIT_FLOAT: ast->type = OUO_TYPE_FLOAT; break;
+    case OUO_AST_LIT_BOOL: ast->type = OUO_TYPE_BOOL; break;
 
     // Expressions
     case OUO_AST_ASSIGN: {
@@ -1504,32 +1535,35 @@ static void _ouo_c_emit_lit(_OuoCompiler *c, OuoAst *ast, OuoObject *obj) {
 static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
   switch (ast->kind) {
     case OUO_AST_MODULE: break;
-    case OUO_AST_IDENT: {
+    case OUO_AST_IDENT:
       _ouo_c_emit_bytes(c, ast, OUO_OP_VAR_GET, (uint8_t)ast->ident.sym_idx);
       break;
-    }
 
     // Literals
-    case OUO_AST_LIT_INT: {
-      OuoObject obj = {
-          .kind = OUO_OBJ_INT,
-          .v_int = ast->lit_int,
-      };
-      _ouo_c_emit_lit(c, ast, &obj);
+    case OUO_AST_LIT_INT:
+      _ouo_c_emit_lit(c, ast,
+          &(OuoObject){
+              .kind = OUO_OBJ_INT,
+              .v_int = ast->lit_int,
+          });
       break;
-    }
-
-    case OUO_AST_LIT_FLOAT: {
-      OuoObject obj = {
-          .kind = OUO_OBJ_FLOAT,
-          .v_float = ast->lit_float,
-      };
-      _ouo_c_emit_lit(c, ast, &obj);
+    case OUO_AST_LIT_FLOAT:
+      _ouo_c_emit_lit(c, ast,
+          &(OuoObject){
+              .kind = OUO_OBJ_FLOAT,
+              .v_float = ast->lit_float,
+          });
       break;
-    }
+    case OUO_AST_LIT_BOOL:
+      _ouo_c_emit_lit(c, ast,
+          &(OuoObject){
+              .kind = OUO_OBJ_BOOL,
+              .v_bool = ast->lit_bool,
+          });
+      break;
 
     // Expressions
-    case OUO_AST_ASSIGN: {
+    case OUO_AST_ASSIGN:
       switch (ast->assign.target->kind) {
         case OUO_AST_IDENT:
           _ouo_c_emit_bytes(c, ast, OUO_OP_VAR_SET,
@@ -1538,7 +1572,6 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
         default: _ouo_c_err_assign_invalid(c, ast); break;
       }
       break;
-    }
     case OUO_AST_BIN_OP:
       switch (ast->bin_op.op) {
         // Arithmetic
@@ -1623,7 +1656,8 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
     case OUO_AST_IDENT: break;
     // Literals
     case OUO_AST_LIT_INT:
-    case OUO_AST_LIT_FLOAT: break;
+    case OUO_AST_LIT_FLOAT:
+    case OUO_AST_LIT_BOOL: break;
     // Expressions
     case OUO_AST_ASSIGN:
       _ouo_c_ast(c, ast->assign.target, true);
@@ -1682,6 +1716,7 @@ static inline void _ouo_obj_print(OuoObject *obj) {
   switch (obj->kind) {
     case OUO_OBJ_INT: ouo_print("%" OUO_PRId, obj->v_int); break;
     case OUO_OBJ_FLOAT: ouo_print("%" OUO_PRIf, obj->v_float); break;
+    case OUO_OBJ_BOOL: ouo_print(obj->v_bool ? "true" : "false"); break;
   }
 }
 
