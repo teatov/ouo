@@ -244,8 +244,12 @@ typedef enum {
   OUO_TOK_MINUS,
   OUO_TOK_ASTERISK,
   OUO_TOK_SLASH,
-  OUO_TOK_EQUALS,
-  OUO_TOK_NOT_EQUALS,
+  OUO_TOK_EQ,
+  OUO_TOK_NEQ,
+  OUO_TOK_LT,
+  OUO_TOK_LT_EQ,
+  OUO_TOK_GT,
+  OUO_TOK_GT_EQ,
   OUO_TOK_NOT,
   // Punctuation
   OUO_TOK_PAREN_OPN,
@@ -406,6 +410,14 @@ typedef enum {
   OUO_OP_NEQ_INT,
   OUO_OP_NEQ_FLOAT,
   OUO_OP_NEQ_BOOL,
+  OUO_OP_LT_INT,
+  OUO_OP_LT_FLOAT,
+  OUO_OP_LT_EQ_INT,
+  OUO_OP_LT_EQ_FLOAT,
+  OUO_OP_GT_INT,
+  OUO_OP_GT_FLOAT,
+  OUO_OP_GT_EQ_INT,
+  OUO_OP_GT_EQ_FLOAT,
   // Control flow
   OUO_OP_JUMP,
   OUO_OP_JUMP_IF_FALSE,
@@ -772,14 +784,20 @@ static OuoToken _ouo_l_next_token(_OuoLexer *l) {
     // Operators
     case '=':
       return _ouo_l_tok_new(
-          l, _ouo_l_check_peek(l, '=') ? OUO_TOK_EQUALS : OUO_TOK_ASSIGN);
+          l, _ouo_l_check_peek(l, '=') ? OUO_TOK_EQ : OUO_TOK_ASSIGN);
     case '+': return _ouo_l_tok_new(l, OUO_TOK_PLUS);
     case '-': return _ouo_l_tok_new(l, OUO_TOK_MINUS);
     case '*': return _ouo_l_tok_new(l, OUO_TOK_ASTERISK);
     case '/': return _ouo_l_tok_new(l, OUO_TOK_SLASH);
     case '!':
       return _ouo_l_tok_new(
-          l, _ouo_l_check_peek(l, '=') ? OUO_TOK_NOT_EQUALS : OUO_TOK_NOT);
+          l, _ouo_l_check_peek(l, '=') ? OUO_TOK_NEQ : OUO_TOK_NOT);
+    case '<':
+      return _ouo_l_tok_new(
+          l, _ouo_l_check_peek(l, '=') ? OUO_TOK_LT_EQ : OUO_TOK_LT);
+    case '>':
+      return _ouo_l_tok_new(
+          l, _ouo_l_check_peek(l, '=') ? OUO_TOK_GT_EQ : OUO_TOK_GT);
     // Punctuation
     case '(': return _ouo_l_tok_new(l, OUO_TOK_PAREN_OPN);
     case ')': return _ouo_l_tok_new(l, OUO_TOK_PAREN_CLS);
@@ -817,8 +835,12 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_MINUS: return "-";
     case OUO_TOK_ASTERISK: return "*";
     case OUO_TOK_SLASH: return "/";
-    case OUO_TOK_EQUALS: return "==";
-    case OUO_TOK_NOT_EQUALS: return "!=";
+    case OUO_TOK_EQ: return "==";
+    case OUO_TOK_NEQ: return "!=";
+    case OUO_TOK_LT: return "<";
+    case OUO_TOK_LT_EQ: return "<=";
+    case OUO_TOK_GT: return ">";
+    case OUO_TOK_GT_EQ: return ">=";
     case OUO_TOK_NOT: return "!";
     // Punctuation
     case OUO_TOK_PAREN_OPN: return "(";
@@ -867,7 +889,7 @@ typedef enum {
   _OUO_PREC_OR,
   _OUO_PREC_AND,
   _OUO_PREC_EQUALITY,
-  _OUO_PREC_COMPARISON,
+  _OUO_PREC_RELATION,
   _OUO_PREC_SUM,
   _OUO_PREC_PRODUCT,
   _OUO_PREC_UNARY,
@@ -1281,8 +1303,12 @@ static const _OuoParseRule _ouo_p_rules[] = {
     [OUO_TOK_MINUS] = {_ouo_p_unary, _ouo_p_binary, _OUO_PREC_SUM},
     [OUO_TOK_ASTERISK] = {NULL, _ouo_p_binary, _OUO_PREC_PRODUCT},
     [OUO_TOK_SLASH] = {NULL, _ouo_p_binary, _OUO_PREC_PRODUCT},
-    [OUO_TOK_EQUALS] = {NULL, _ouo_p_binary, _OUO_PREC_EQUALITY},
-    [OUO_TOK_NOT_EQUALS] = {NULL, _ouo_p_binary, _OUO_PREC_EQUALITY},
+    [OUO_TOK_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_EQUALITY},
+    [OUO_TOK_NEQ] = {NULL, _ouo_p_binary, _OUO_PREC_EQUALITY},
+    [OUO_TOK_LT] = {NULL, _ouo_p_binary, _OUO_PREC_RELATION},
+    [OUO_TOK_LT_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_RELATION},
+    [OUO_TOK_GT] = {NULL, _ouo_p_binary, _OUO_PREC_RELATION},
+    [OUO_TOK_GT_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_RELATION},
     // Punctuation
     [OUO_TOK_PAREN_OPN] = {_ouo_p_grouping, NULL, _OUO_PREC_ACCESS},
     [OUO_TOK_BRACE_OPN] = {_ouo_p_block, NULL, _OUO_PREC_ACCESS},
@@ -1637,11 +1663,20 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
           else _ouo_c_err_binary_type(c, ast);
           break;
         // Comparison
-        case OUO_TOK_EQUALS:
-        case OUO_TOK_NOT_EQUALS:
+        case OUO_TOK_EQ:
+        case OUO_TOK_NEQ:
           if (_ouo_ast_binary_is(ast, OUO_TYPE_INT) ||
               _ouo_ast_binary_is(ast, OUO_TYPE_FLOAT) ||
               _ouo_ast_binary_is(ast, OUO_TYPE_BOOL))
+            ast->type = OUO_TYPE_BOOL;
+          else _ouo_c_err_binary_type(c, ast);
+          break;
+        case OUO_TOK_LT:
+        case OUO_TOK_LT_EQ:
+        case OUO_TOK_GT:
+        case OUO_TOK_GT_EQ:
+          if (_ouo_ast_binary_is(ast, OUO_TYPE_INT) ||
+              _ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
             ast->type = OUO_TYPE_BOOL;
           else _ouo_c_err_binary_type(c, ast);
           break;
@@ -1873,7 +1908,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
           break;
 
         // Comparison
-        case OUO_TOK_EQUALS:
+        case OUO_TOK_EQ:
           if (_ouo_ast_binary_is(ast, OUO_TYPE_INT))
             _ouo_c_emit_byte(c, ast, OUO_OP_EQ_INT);
           else if (_ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
@@ -1883,13 +1918,45 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
           else _ouo_c_err_binary_type(c, ast);
           break;
 
-        case OUO_TOK_NOT_EQUALS:
+        case OUO_TOK_NEQ:
           if (_ouo_ast_binary_is(ast, OUO_TYPE_INT))
             _ouo_c_emit_byte(c, ast, OUO_OP_NEQ_INT);
           else if (_ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
             _ouo_c_emit_byte(c, ast, OUO_OP_NEQ_FLOAT);
           else if (_ouo_ast_binary_is(ast, OUO_TYPE_BOOL))
             _ouo_c_emit_byte(c, ast, OUO_OP_NEQ_BOOL);
+          else _ouo_c_err_binary_type(c, ast);
+          break;
+
+        case OUO_TOK_LT:
+          if (_ouo_ast_binary_is(ast, OUO_TYPE_INT))
+            _ouo_c_emit_byte(c, ast, OUO_OP_LT_INT);
+          else if (_ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
+            _ouo_c_emit_byte(c, ast, OUO_OP_LT_FLOAT);
+          else _ouo_c_err_binary_type(c, ast);
+          break;
+
+        case OUO_TOK_LT_EQ:
+          if (_ouo_ast_binary_is(ast, OUO_TYPE_INT))
+            _ouo_c_emit_byte(c, ast, OUO_OP_LT_EQ_INT);
+          else if (_ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
+            _ouo_c_emit_byte(c, ast, OUO_OP_LT_EQ_FLOAT);
+          else _ouo_c_err_binary_type(c, ast);
+          break;
+
+        case OUO_TOK_GT:
+          if (_ouo_ast_binary_is(ast, OUO_TYPE_INT))
+            _ouo_c_emit_byte(c, ast, OUO_OP_GT_INT);
+          else if (_ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
+            _ouo_c_emit_byte(c, ast, OUO_OP_GT_FLOAT);
+          else _ouo_c_err_binary_type(c, ast);
+          break;
+
+        case OUO_TOK_GT_EQ:
+          if (_ouo_ast_binary_is(ast, OUO_TYPE_INT))
+            _ouo_c_emit_byte(c, ast, OUO_OP_GT_EQ_INT);
+          else if (_ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
+            _ouo_c_emit_byte(c, ast, OUO_OP_GT_EQ_FLOAT);
           else _ouo_c_err_binary_type(c, ast);
           break;
 
@@ -1932,13 +1999,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
 
 static inline void _ouo_c_scope_begin(_OuoCompiler *c) { c->scope_depth++; }
 
-static inline void _ouo_c_scope_end(_OuoCompiler *c,
-#ifndef OUO_NOEMIT
-    OuoAst *ast
-#else
-    OuoAst *_
-#endif
-) {
+static inline void _ouo_c_scope_end(_OuoCompiler *c, OuoAst *ast) {
   c->scope_depth--;
   while (c->res->symbols.count > 0 &&
       c->res->symbols.items[c->res->symbols.count - 1].scope_depth >
@@ -1946,6 +2007,8 @@ static inline void _ouo_c_scope_end(_OuoCompiler *c,
     c->res->symbols.count--;
 #ifndef OUO_NOEMIT
     _ouo_c_emit_byte(c, ast, OUO_OP_POP);
+#else
+    (void)ast;
 #endif
   }
 }
@@ -2095,6 +2158,7 @@ static const char *_ouo_op_code_str(OuoOpCode op_code) {
     case OUO_OP_VAR_GET: return "VAR_GET";
     case OUO_OP_VAR_SET: return "VAR_SET";
     case OUO_OP_LITERAL: return "LITERAL";
+
     // Arithmetic
     case OUO_OP_ADD_INT: return "ADD_INT";
     case OUO_OP_ADD_FLOAT: return "ADD_FLOAT";
@@ -2104,8 +2168,10 @@ static const char *_ouo_op_code_str(OuoOpCode op_code) {
     case OUO_OP_MULT_FLOAT: return "MULT_FLOAT";
     case OUO_OP_DIV_INT: return "DIV_INT";
     case OUO_OP_DIV_FLOAT: return "DIV_FLOAT";
+
     case OUO_OP_NEG_INT: return "NEG_INT";
     case OUO_OP_NEG_FLOAT: return "NEG_FLOAT";
+
     // Comparison
     case OUO_OP_EQ_INT: return "EQ_INT";
     case OUO_OP_EQ_FLOAT: return "EQ_FLOAT";
@@ -2113,10 +2179,21 @@ static const char *_ouo_op_code_str(OuoOpCode op_code) {
     case OUO_OP_NEQ_INT: return "NEQ_INT";
     case OUO_OP_NEQ_FLOAT: return "NEQ_FLOAT";
     case OUO_OP_NEQ_BOOL: return "NEQ_BOOL";
+
+    case OUO_OP_LT_INT: return "LT_INT";
+    case OUO_OP_LT_FLOAT: return "LT_FLOAT";
+    case OUO_OP_LT_EQ_INT: return "LT_EQ_INT";
+    case OUO_OP_LT_EQ_FLOAT: return "LT_EQ_FLOAT";
+    case OUO_OP_GT_INT: return "GT_INT";
+    case OUO_OP_GT_FLOAT: return "GT_FLOAT";
+    case OUO_OP_GT_EQ_INT: return "GT_EQ_INT";
+    case OUO_OP_GT_EQ_FLOAT: return "GT_EQ_FLOAT";
+
     // Control flow
     case OUO_OP_JUMP: return "JUMP";
     case OUO_OP_JUMP_IF_FALSE: return "JUMP_IF_FALSE";
     case OUO_OP_RETURN: return "RETURN";
+
     // Input/output
     case OUO_OP_PRINT: return "PRINT";
   }
@@ -2312,6 +2389,7 @@ static void _ouo_vm_run(_OuoVm *vm) {
       case OUO_OP_MULT_FLOAT: _OUO_VM_BINARY(vm, ip, float, *); break;
       case OUO_OP_DIV_INT: _OUO_VM_BINARY(vm, ip, int, /); break;
       case OUO_OP_DIV_FLOAT: _OUO_VM_BINARY(vm, ip, float, /); break;
+
       case OUO_OP_NEG_INT: _OUO_VM_UNARY(vm, ip, int, -); break;
       case OUO_OP_NEG_FLOAT: _OUO_VM_UNARY(vm, ip, float, -); break;
 
@@ -2322,6 +2400,19 @@ static void _ouo_vm_run(_OuoVm *vm) {
       case OUO_OP_NEQ_INT: _OUO_VM_BINARY_TO(vm, ip, int, !=, bool); break;
       case OUO_OP_NEQ_FLOAT: _OUO_VM_BINARY_TO(vm, ip, float, !=, bool); break;
       case OUO_OP_NEQ_BOOL: _OUO_VM_BINARY_TO(vm, ip, bool, !=, bool); break;
+
+      case OUO_OP_LT_INT: _OUO_VM_BINARY_TO(vm, ip, int, <, bool); break;
+      case OUO_OP_LT_FLOAT: _OUO_VM_BINARY_TO(vm, ip, float, <, bool); break;
+      case OUO_OP_LT_EQ_INT: _OUO_VM_BINARY_TO(vm, ip, int, <=, bool); break;
+      case OUO_OP_LT_EQ_FLOAT:
+        _OUO_VM_BINARY_TO(vm, ip, float, <=, bool);
+        break;
+      case OUO_OP_GT_INT: _OUO_VM_BINARY_TO(vm, ip, int, >, bool); break;
+      case OUO_OP_GT_FLOAT: _OUO_VM_BINARY_TO(vm, ip, float, >, bool); break;
+      case OUO_OP_GT_EQ_INT: _OUO_VM_BINARY_TO(vm, ip, int, >=, bool); break;
+      case OUO_OP_GT_EQ_FLOAT:
+        _OUO_VM_BINARY_TO(vm, ip, float, >=, bool);
+        break;
 
       // Control flow
       case OUO_OP_JUMP: {
