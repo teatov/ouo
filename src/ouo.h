@@ -1498,7 +1498,7 @@ static inline bool _ouo_c_find_sym(
   return false;
 }
 
-static inline bool _ouo_c_sym_check_defined(
+static inline void _ouo_c_add_sym(
     _OuoCompiler *c, OuoToken *tok, OuoSymbol *sym) {
   size_t sym_idx;
   if (_ouo_c_find_sym(c, &sym->name, &sym_idx)) {
@@ -1506,14 +1506,8 @@ static inline bool _ouo_c_sym_check_defined(
         _OUO_TOK_FMT_ARGS(sym->name));
     _ouo_c_err_append(c, c->res->symbols.items[sym_idx].name, OUO_ERR_NOTE,
         "Previous definition here.");
-    return true;
+    return;
   }
-  return false;
-}
-
-static inline void _ouo_c_add_sym(
-    _OuoCompiler *c, OuoToken *tok, OuoSymbol *sym) {
-  if (sym->type == OUO_TYPE_UNKNOWN) return;
 
   if (c->res->symbols.count > UINT8_MAX) {
     _ouo_c_err(c, *tok, OUO_ERR_COMPILE_FAIL,
@@ -1619,7 +1613,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_LIT_BOOL: ast->type = OUO_TYPE_BOOL; break;
 
     // Expressions
-    case OUO_AST_ASSIGN: {
+    case OUO_AST_ASSIGN:
       ast->type = OUO_TYPE_VOID;
       switch (ast->k.assign.target->kind) {
         case OUO_AST_IDENT:
@@ -1630,7 +1624,6 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
         default: _ouo_c_err_assign_invalid(c, ast); break;
       }
       break;
-    }
     case OUO_AST_BINARY:
       switch (ast->k.binary.op) {
         // Arithmetic
@@ -1669,20 +1662,28 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       }
       break;
     case OUO_AST_BLOCK: ast->type = OUO_TYPE_VOID; break;
-    case OUO_AST_IF:
-      if (ast->k.if_expr.condition->type != OUO_TYPE_BOOL)
+    case OUO_AST_IF: {
+      if (ast->k.if_expr.condition->type != OUO_TYPE_BOOL) {
+        bool panic_prev = c->panic_mode;
+        c->panic_mode = false;
         _ouo_c_err_if_condition_type(c, ast);
+        c->panic_mode = panic_prev;
+      }
 
       if (ast->k.if_expr.else_branch != NULL &&
-          ast->k.if_expr.then_branch->type == ast->k.if_expr.else_branch->type)
+          ast->k.if_expr.then_branch->type ==
+              ast->k.if_expr.else_branch->type) {
         ast->type = ast->k.if_expr.then_branch->type;
-      else if (ast->k.if_expr.then_branch->type != OUO_TYPE_VOID ||
-          ast->k.if_expr.else_branch != NULL)
+      } else if (ast->k.if_expr.then_branch->type != OUO_TYPE_VOID ||
+          ast->k.if_expr.else_branch != NULL) {
         _ouo_c_err_if_branch_type(c, ast, ast->k.if_expr.then_branch->type,
             ast->k.if_expr.else_branch != NULL
                 ? ast->k.if_expr.else_branch->type
                 : OUO_TYPE_VOID);
+      }
+
       break;
+    }
 
     // Statements
     case OUO_AST_EXPR_STMT: ast->type = ast->k.child->type; break;
@@ -1693,33 +1694,30 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       break;
     case OUO_AST_DECL_VAR: {
       ast->type = OUO_TYPE_VOID;
-      bool failed = false;
       bool panic_prev = c->panic_mode;
       c->panic_mode = false;
 
       if (ast->k.decl_var.value->type == OUO_TYPE_VOID ||
           ast->k.decl_var.type_annotation == OUO_TYPE_VOID) {
         _ouo_c_err_var_void(c, &ast->tok);
-        failed = true;
       } else if (ast->k.decl_var.type_annotation != OUO_TYPE_UNKNOWN &&
           ast->k.decl_var.value->type != OUO_TYPE_UNKNOWN &&
           ast->k.decl_var.value->type != ast->k.decl_var.type_annotation) {
         _ouo_c_err_assign_type(c, &ast->tok, ast->k.decl_var.type_annotation,
             ast->k.decl_var.value->type);
-        failed = true;
-      } else if (ast->k.decl_var.value->type == OUO_TYPE_UNKNOWN) {
-        failed = true;
       }
 
       OuoSymbol sym = {
           .name = ast->k.decl_var.name,
-          .type = ast->k.decl_var.value->type,
+          .type = ast->k.decl_var.type_annotation != OUO_TYPE_UNKNOWN
+              ? ast->k.decl_var.type_annotation
+              : ast->k.decl_var.value->type,
       };
-      if (_ouo_c_sym_check_defined(c, &ast->k.decl_var.name, &sym))
-        failed = true;
-      if (!failed) _ouo_c_add_sym(c, &ast->k.decl_var.name, &sym);
+      if (!c->res->keep_module_scope)
+        _ouo_c_add_sym(c, &ast->k.decl_var.name, &sym);
       c->panic_mode = panic_prev;
-    } break;
+      break;
+    }
   }
 }
 
@@ -1972,10 +1970,12 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
       c->panic_mode = panic_prev;
       break;
     case OUO_AST_IDENT: break;
+
     // Literals
     case OUO_AST_LIT_INT:
     case OUO_AST_LIT_FLOAT:
     case OUO_AST_LIT_BOOL: break;
+
     // Expressions
     case OUO_AST_ASSIGN:
       _ouo_c_ast(c, ast->k.assign.target, true);
@@ -1987,13 +1987,16 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
       break;
     case OUO_AST_UNARY: _ouo_c_ast(c, ast->k.unary.right, noemit); break;
     case OUO_AST_IF: {
+      c->panic_mode = false;
       _ouo_c_ast(c, ast->k.if_expr.condition, noemit);
+      bool panic_prev = c->panic_mode;
 
 #ifndef OUO_NOEMIT
       size_t then_jump = _ouo_c_emit_jump(c, ast, OUO_OP_JUMP_IF_FALSE);
       _ouo_c_emit_byte(c, ast, OUO_OP_POP);
 #endif
 
+      c->panic_mode = false;
       _ouo_c_scope_begin(c);
       ast->k.if_expr.then_branch->nopop = true;
       _ouo_c_ast(c, ast->k.if_expr.then_branch, noemit);
@@ -2006,6 +2009,7 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
 #endif
 
       if (ast->k.if_expr.else_branch != NULL) {
+        c->panic_mode = false;
         _ouo_c_scope_begin(c);
         ast->k.if_expr.else_branch->nopop = true;
         _ouo_c_ast(c, ast->k.if_expr.else_branch, noemit);
@@ -2015,8 +2019,11 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
 #ifndef OUO_NOEMIT
       _ouo_c_patch_jump(c, ast, else_jump);
 #endif
+
+      c->panic_mode = panic_prev;
       break;
     }
+
     // Statements
     case OUO_AST_EXPR_STMT:
     case OUO_AST_PRINT: _ouo_c_ast(c, ast->k.child, noemit); break;
