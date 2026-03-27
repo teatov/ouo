@@ -51,8 +51,8 @@ int main(void) {
               .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 5}}});
 
   test_parse_exp_ast_expr(TN("bin op"), "2 + 2",
-      &(OuoAst){.kind = OUO_AST_BIN_OP,
-          .k.bin_op = {
+      &(OuoAst){.kind = OUO_AST_BINARY,
+          .k.binary = {
               .left = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 2},
               .op = OUO_TOK_PLUS,
               .right = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 2}}});

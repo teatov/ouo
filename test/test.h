@@ -67,12 +67,18 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       if (!_ast_eq(exp->k.assign.target, got->k.assign.target)) return false;
       if (!_ast_eq(exp->k.assign.value, got->k.assign.value)) return false;
       break;
-    case OUO_AST_BIN_OP:
-      _ast_eq_assert(got, exp->k.bin_op.op == got->k.bin_op.op, "%s",
-          _ouo_tok_kind_str(exp->k.bin_op.op),
-          _ouo_tok_kind_str(got->k.bin_op.op));
-      if (!_ast_eq(exp->k.bin_op.left, got->k.bin_op.left)) return false;
-      if (!_ast_eq(exp->k.bin_op.right, got->k.bin_op.right)) return false;
+    case OUO_AST_BINARY:
+      _ast_eq_assert(got, exp->k.binary.op == got->k.binary.op, "%s",
+          _ouo_tok_kind_str(exp->k.binary.op),
+          _ouo_tok_kind_str(got->k.binary.op));
+      if (!_ast_eq(exp->k.binary.left, got->k.binary.left)) return false;
+      if (!_ast_eq(exp->k.binary.right, got->k.binary.right)) return false;
+      break;
+    case OUO_AST_UNARY:
+      _ast_eq_assert(got, exp->k.unary.op == got->k.unary.op, "%s",
+          _ouo_tok_kind_str(exp->k.unary.op),
+          _ouo_tok_kind_str(got->k.unary.op));
+      if (!_ast_eq(exp->k.unary.right, got->k.unary.right)) return false;
       break;
     case OUO_AST_IF:
       if (!_ast_eq(exp->k.if_expr.condition, got->k.if_expr.condition))
