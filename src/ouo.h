@@ -420,6 +420,7 @@ typedef enum {
   // Arithmetic
   OUO_OP_ADD_INT,
   OUO_OP_ADD_FLOAT,
+  OUO_OP_ADD_STR,
   OUO_OP_SUB_INT,
   OUO_OP_SUB_FLOAT,
   OUO_OP_MULT_INT,
@@ -1772,6 +1773,13 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       switch (ast->k.binary.op) {
         // Arithmetic
         case OUO_TOK_PLUS:
+          if (_ouo_ast_binary_is(ast, OUO_TYPE_INT)) ast->type = OUO_TYPE_INT;
+          else if (_ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
+            ast->type = OUO_TYPE_FLOAT;
+          else if (_ouo_ast_binary_is(ast, OUO_TYPE_STR))
+            ast->type = OUO_TYPE_STR;
+          else _ouo_c_err_binary_type(c, ast);
+          break;
         case OUO_TOK_MINUS:
         case OUO_TOK_ASTERISK:
         case OUO_TOK_SLASH:
@@ -1936,6 +1944,9 @@ static inline void _ouo_c_emit_bytes2(
   _ouo_c_emit_byte(c, ast, byte2);
 }
 
+static inline bool _ouo_obj_is_rc(OuoObject *obj);
+static inline void _ouo_obj_rc_ref(OuoObject *obj);
+
 static inline void _ouo_c_emit_lit(
     _OuoCompiler *c, OuoAst *ast, OuoObject *obj) {
   if (c->res->chunk.literals.count > UINT8_MAX) {
@@ -1944,6 +1955,7 @@ static inline void _ouo_c_emit_lit(
     return;
   }
 
+  if (_ouo_obj_is_rc(obj)) _ouo_obj_rc_ref(obj);
   size_t lit_idx = _ouo_c_chunk_add_lit(c, obj);
   _ouo_c_emit_bytes2(c, ast, OUO_OP_LITERAL, (uint8_t)lit_idx);
 }
@@ -1986,7 +1998,15 @@ static inline void _ouo_c_emit_loop(
 static inline OuoRefCounted *_ouo_rc_new(size_t size) {
   OuoRefCounted *rc = ouo_malloc(size);
   ouo_assert_nomem(rc);
-  rc->refs = 1;
+  rc->refs = 0;
+  return rc;
+}
+
+static inline OuoRcStr *_ouo_rc_new_str(void) {
+  OuoRcStr *rc = (OuoRcStr *)_ouo_rc_new(sizeof(OuoRcStr));
+  rc->str.items = NULL;
+  rc->str.count = 0;
+  rc->str.capacity = 0;
   return rc;
 }
 
@@ -1998,7 +2018,8 @@ static inline OuoRefCounted *_ouo_rc_new(size_t size) {
 #define _ouo_obj_new_bool(v) \
   ((OuoObject){.kind = OUO_OBJ_BOOL, .k.v_bool = (v)})
 
-#define _ouo_obj_new_str(ref) ((OuoObject){.kind = OUO_OBJ_STR, .k.rc = (ref)})
+#define _ouo_obj_new_str(ref) \
+  ((OuoObject){.kind = OUO_OBJ_STR, .k.rc = (OuoRefCounted *)(ref)})
 
 static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
   switch (ast->kind) {
@@ -2018,13 +2039,10 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
       _ouo_c_emit_lit(c, ast, &_ouo_obj_new_bool(ast->k.lit_bool));
       break;
     case OUO_AST_LIT_STR: {
-      OuoRcStr *rc = (OuoRcStr *)_ouo_rc_new(sizeof(OuoRcStr));
-      rc->str.items = NULL;
-      rc->str.count = 0;
-      rc->str.capacity = 0;
+      OuoRcStr *rc = _ouo_rc_new_str();
       ouo_da_append_many(
           &rc->str, ast->k.lit_str.items + 1, ast->k.lit_str.count - 2);
-      _ouo_c_emit_lit(c, ast, &_ouo_obj_new_str((OuoRefCounted *)rc));
+      _ouo_c_emit_lit(c, ast, &_ouo_obj_new_str(rc));
       break;
     }
 
@@ -2046,6 +2064,8 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
             _ouo_c_emit_byte(c, ast, OUO_OP_ADD_INT);
           else if (_ouo_ast_binary_is(ast, OUO_TYPE_FLOAT))
             _ouo_c_emit_byte(c, ast, OUO_OP_ADD_FLOAT);
+          else if (_ouo_ast_binary_is(ast, OUO_TYPE_STR))
+            _ouo_c_emit_byte(c, ast, OUO_OP_ADD_STR);
           else _ouo_c_err_binary_type(c, ast);
           break;
 
@@ -2357,8 +2377,8 @@ void ouo_compile(OuoAst *ast, OuoCompileResult *res) {
 #ifdef OUO_DEBUG
   for (size_t i = 0; i < res->symbols.count; i++) {
     OuoSymbol sym = res->symbols.items[i];
-    ouo_printdbg("[%zu %.*s '%s' (%zu)] ", i, _OUO_TOK_FMT(sym.name),
-        _ouo_type_kind_str(sym.type), sym.scope_depth);
+    ouo_printdbg("[%zu '%s' %.*s (%zu)] ", i, _ouo_type_kind_str(sym.type),
+        _OUO_TOK_FMT(sym.name), sym.scope_depth);
   }
   ouo_printdbg("\n");
 
@@ -2370,10 +2390,6 @@ void ouo_compile(OuoAst *ast, OuoCompileResult *res) {
 }
 
 #ifndef OUO_NOEMIT
-
-static inline bool _ouo_obj_is_rc(OuoObject *obj) {
-  return obj->kind == OUO_OBJ_STR;
-}
 
 static inline bool _ouo_obj_rc_deref(OuoObject *obj);
 
@@ -2426,6 +2442,7 @@ static const char *_ouo_op_code_str(OuoOpCode op_code) {
     // Arithmetic
     case OUO_OP_ADD_INT: return "ADD_INT";
     case OUO_OP_ADD_FLOAT: return "ADD_FLOAT";
+    case OUO_OP_ADD_STR: return "ADD_STR";
     case OUO_OP_SUB_INT: return "SUB_INT";
     case OUO_OP_SUB_FLOAT: return "SUB_FLOAT";
     case OUO_OP_MULT_INT: return "MULT_INT";
@@ -2561,6 +2578,10 @@ static inline void _ouo_vm_init(
   vm->chunk = chunk;
 }
 
+static inline bool _ouo_obj_is_rc(OuoObject *obj) {
+  return obj->kind == OUO_OBJ_STR;
+}
+
 static inline void _ouo_obj_rc_ref(OuoObject *obj) {
 #ifdef OUO_DEBUG
   ouo_printdbg("ref %zu -> %zu: ", obj->k.rc->refs, obj->k.rc->refs + 1);
@@ -2689,6 +2710,15 @@ static void _ouo_vm_run(_OuoVm *vm) {
       // Arithmetic
       case OUO_OP_ADD_INT: _OUO_VM_BINARY(vm, ip, int, +); break;
       case OUO_OP_ADD_FLOAT: _OUO_VM_BINARY(vm, ip, float, +); break;
+      case OUO_OP_ADD_STR: {
+        OuoRcStr *b = (OuoRcStr *)_ouo_vm_stack_pop(vm, ip)->k.rc;
+        OuoRcStr *a = (OuoRcStr *)_ouo_vm_stack_pop(vm, ip)->k.rc;
+        OuoRcStr *rc = _ouo_rc_new_str();
+        ouo_da_append_many(&rc->str, a->str.items, a->str.count);
+        ouo_da_append_many(&rc->str, b->str.items, b->str.count);
+        _ouo_vm_stack_push(vm, ip, &_ouo_obj_new_str(rc));
+        break;
+      }
       case OUO_OP_SUB_INT: _OUO_VM_BINARY(vm, ip, int, -); break;
       case OUO_OP_SUB_FLOAT: _OUO_VM_BINARY(vm, ip, float, -); break;
       case OUO_OP_MULT_INT: _OUO_VM_BINARY(vm, ip, int, *); break;
