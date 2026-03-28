@@ -660,6 +660,15 @@ static inline bool _ouo_str_slice_eq(OuoStringSlice *a, OuoStringSlice *b) {
   return a->len == b->len && memcmp(a->start, b->start, a->len) == 0;
 }
 
+static inline uint8_t _ouo_utf8_cp_len(const char *p) {
+  unsigned char c = (unsigned char)p[0];
+  if ((c & 0x80) == 0x00) return 1;
+  else if ((c & 0xE0) == 0xC0) return 2;
+  else if ((c & 0xF0) == 0xE0) return 3;
+  else if ((c & 0xF8) == 0xF0) return 4;
+  else return 1;
+}
+
 static const char *_ouo_type_kind_str(OuoTypeKind kind) {
   switch (kind) {
     case OUO_TYPE_UNKNOWN: return "unknown";
@@ -734,13 +743,19 @@ static inline void _ouo_l_skip_whitespace(_OuoLexer *l) {
   }
 }
 
-static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
-  size_t len = (size_t)(l->curr - l->tok_start);
+static inline OuoToken _ouo_l_tok_len_new(
+    _OuoLexer *l, OuoTokenKind kind, size_t len) {
   return (OuoToken){
       .kind = kind,
       .str = {.start = l->tok_start, .len = len},
-      .pos = l->pos,
+      .pos = {.line = l->pos.line,
+          .col = l->pos.col - len,
+          .line_start = l->pos.line_start},
   };
+}
+
+static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
+  return _ouo_l_tok_len_new(l, kind, (size_t)(l->curr - l->tok_start));
 }
 
 static inline OuoToken _ouo_l_check_kw(_OuoLexer *l, size_t rest_start,
@@ -863,7 +878,10 @@ static OuoToken _ouo_l_next_token(_OuoLexer *l) {
     default: break;
   }
 
-  return _ouo_l_tok_new(l, OUO_TOK_ILLEGAL);
+  // Illegal
+  size_t len = _ouo_utf8_cp_len(l->tok_start);
+  for (size_t i = 0; i < len - 1; i++) _ouo_l_advance(l);
+  return _ouo_l_tok_len_new(l, OUO_TOK_ILLEGAL, len);
 }
 
 static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
@@ -1980,8 +1998,8 @@ static inline void _ouo_c_patch_jump(
     return;
   }
 
-  c->res->chunk.items[op_idx] = (jump >> 8) & 0xff;
-  c->res->chunk.items[op_idx + 1] = jump & 0xff;
+  c->res->chunk.items[op_idx] = (jump >> 8) & 0xFF;
+  c->res->chunk.items[op_idx + 1] = jump & 0xFF;
 }
 
 static inline void _ouo_c_emit_loop(
@@ -1994,8 +2012,8 @@ static inline void _ouo_c_emit_loop(
   }
 
   _ouo_c_emit_byte(c, ast, OUO_OP_LOOP);
-  _ouo_c_emit_byte(c, ast, (jump >> 8) & 0xff);
-  _ouo_c_emit_byte(c, ast, jump & 0xff);
+  _ouo_c_emit_byte(c, ast, (jump >> 8) & 0xFF);
+  _ouo_c_emit_byte(c, ast, jump & 0xFF);
 }
 
 static inline OuoRc *_ouo_rc_new(size_t size) {
