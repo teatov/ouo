@@ -43,9 +43,10 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
           return false;
       break;
     case OUO_AST_IDENT:
-      _ast_eq_assert(got, _ouo_str_slice_eq(&exp->k.ident.name.str, &got->k.ident.name.str),
-          "%.*s", _OUO_TOK_FMT_ARGS(exp->k.ident.name),
-          _OUO_TOK_FMT_ARGS(got->k.ident.name));
+      _ast_eq_assert(got,
+          _ouo_str_slice_eq(&exp->k.ident.name.str, &got->k.ident.name.str),
+          "%.*s", _OUO_TOK_FMT(exp->k.ident.name),
+          _OUO_TOK_FMT(got->k.ident.name));
       break;
 
     // Literals
@@ -60,6 +61,12 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
     case OUO_AST_LIT_BOOL:
       _ast_eq_assert(got, exp->k.lit_bool == got->k.lit_bool, "%d",
           exp->k.lit_bool, got->k.lit_bool);
+      break;
+    case OUO_AST_LIT_STR:
+      _ast_eq_assert(got, exp->k.lit_str.count == got->k.lit_str.count, "%zu",
+          exp->k.lit_str.count, got->k.lit_str.count);
+      _ast_eq_assert(got, false && "TODO", "%zu", exp->k.lit_str.count,
+          got->k.lit_str.count);
       break;
 
     // Expressions
@@ -102,9 +109,10 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       break;
     case OUO_AST_DECL_VAR:
       _ast_eq_assert(got,
-          _ouo_str_slice_eq(&exp->k.decl_var.name.str, &got->k.decl_var.name.str), "%.*s",
-          _OUO_TOK_FMT_ARGS(exp->k.decl_var.name),
-          _OUO_TOK_FMT_ARGS(got->k.decl_var.name));
+          _ouo_str_slice_eq(
+              &exp->k.decl_var.name.str, &got->k.decl_var.name.str),
+          "%.*s", _OUO_TOK_FMT(exp->k.decl_var.name),
+          _OUO_TOK_FMT(got->k.decl_var.name));
       if (!_ast_eq(exp->k.decl_var.value, got->k.decl_var.value)) return false;
       break;
   }

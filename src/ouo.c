@@ -11,6 +11,13 @@
 #define OUO_IMPLEMENTATION
 #include "ouo.h"
 
+static void cleanup(OuoCompileResult *c_res, OuoInterpretResult *i_res) {
+  ouo_da_free(c_res->symbols);
+  OUO_DA_FOREACH(OuoObject, obj, &i_res->stack) {
+    if (_ouo_obj_is_rc(obj)) _ouo_obj_rc_deref(obj);
+  }
+}
+
 static OuoErrorCode run(const char *src, const char *path,
     OuoParseResult *p_res, OuoCompileResult *c_res,
     OuoInterpretResult *vm_res) {
@@ -97,7 +104,7 @@ static OuoErrorCode start_repl(void) {
     ouo_da_append(&lines, line);
   }
 
-  ouo_da_free(c_res.symbols);
+  cleanup(&c_res, &vm_res);
   OUO_DA_FOREACH(char *, line, &lines) { ouo_free(*line); }
   ouo_da_free(lines);
   return OUO_OK;
@@ -139,7 +146,7 @@ static OuoErrorCode run_file(const char *path) {
 
   OuoErrorCode err_code = run(src, path, &p_res, &c_res, &vm_res);
 
-  ouo_da_free(c_res.symbols);
+  cleanup(&c_res, &vm_res);
   ouo_free(src);
   return err_code;
 }
