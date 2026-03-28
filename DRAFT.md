@@ -81,7 +81,7 @@ var s: str = `ass
   	         `usa
 ```
 
-- [ ] boolean
+- [x] boolean
 
 ```ouo
 var b: bool = true
@@ -162,9 +162,40 @@ type Zero: 0
 type HttpMethod: un["GET", "POST"]
 ```
 
+## Blocks
+
+- [x] blocks
+
+```ouo
+{
+  var a = 5
+}
+```
+
+- [ ] evaluating blocks
+
+```ouo
+a = {
+  var b = 5
+  out b
+}
+```
+
+- [ ] blocks with labels
+
+```ouo
+a = #outer: int {
+  var b = 5
+  {
+    b = 10
+    out #outer b
+  }
+}
+```
+
 ## Control flow
 
-- [ ] if expressions
+- [x] if expressions
 
 ```ouo
 if (a) {
@@ -201,13 +232,37 @@ switch (a) {
 switch (a) int => print('int')
 ```
 
+- [ ] for expressions
+
+```ouo
+for (array as n, i) {
+  print(i, n)
+}
+```
+
+- [ ] for with label
+
+```ouo
+for (#outer, array as n) {
+  for (array as n)  {
+    break #outer
+  }
+}
+```
+
+- [ ] for with accumulator
+
+```ouo
+sum = for (#acc: int = 0, array as n) #acc + n
+```
+
 ## Functions
 
 - [ ] functions
 
 ```ouo
 fn ass(blast: int): int => {
-	var usa := blast + 5
+	var usa = blast + 5
 	return usa
 }
 
