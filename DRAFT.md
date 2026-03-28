@@ -70,7 +70,8 @@ var t2: str = "ass \(if (i > 2) {) blast \(})"
 - [ ] raw string
 
 ```ouo
-var s: str = #"ass\n"#
+var s: str = ~"ass"\n"~
+var s: str = ~~"ass~"\n"~~
 ```
 
 - [ ] multiline string
@@ -106,7 +107,7 @@ var x: byte = 0xBADA55
 - [ ] union types
 
 ```ouo
-type Number = un[int, float]
+type Number: un[int, float]
 var ni: Number = 5
 var nf: Number = 5.0
 
@@ -118,8 +119,8 @@ ass('usa')
 - [ ] optional types
 
 ```ouo
-type MaybeInt = un[int, nil]
-type MaybeInt = opt[int]
+type MaybeInt: un[int, nil]
+type MaybeInt: opt[int]
 ```
 
 ### Compound types
@@ -128,26 +129,27 @@ type MaybeInt = opt[int]
 
 ```ouo
 var a = arr[int][1, 2, 3]
-var e = a[0]
+var e = a.(0)
 
-var aa: arr[arr[int]] = [
-	[1, 2, 3],
-	[4, 5, 6],
-	[7, 8, 9],
+var aa: arr[arr[int]] = _[
+	_[1, 2, 3],
+	_[4, 5, 6],
+	_[7, 8, 9],
 ]
 ```
 
 - [ ] record
 
 ```ouo
-var s = rec[ass: int][.ass: 5]
+var r = rec[ass: int][.ass: 5]
+var e = r.ass
 
-type Point = rec[
+type Point: rec[
 	x: int,
 	y: int,
 ]
 
-var p = Point[
+var p: Point = _[
 	.x: 5,
 	.y: 10,
 ]
