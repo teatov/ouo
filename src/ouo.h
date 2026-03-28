@@ -459,6 +459,8 @@ struct OuoObject;
 
 /// Owns memory for `items`, `literals.items` and `lines.items`.
 typedef struct {
+  OuoStringSlice name;
+
   uint8_t *items;
   size_t count;
   size_t capacity;
@@ -509,7 +511,7 @@ void ouo_chunk_free(OuoChunk *chunk);
 
 #ifdef OUO_DEBUG
 /// Prints bytecode of the chunk for debugging.
-void ouo_chunk_dump(OuoChunk *chunk, const char *name);
+void ouo_chunk_dump(OuoChunk *chunk);
 #endif // OUO_DEBUG
 
 //
@@ -517,11 +519,13 @@ void ouo_chunk_dump(OuoChunk *chunk, const char *name);
 //
 
 typedef enum {
-  // Pass by value
+  // Copy-on-write
   OUO_OBJ_INT,
   OUO_OBJ_FLOAT,
   OUO_OBJ_BOOL,
+  // Reference-counted
   OUO_OBJ_STR,
+  OUO_OBJ_FN,
 } OuoObjectKind;
 
 typedef struct {
@@ -532,10 +536,11 @@ typedef struct OuoObject {
   OuoObjectKind kind;
 
   union {
-    // Pass by value
+    // Copy-on-write
     ouo_int_t v_int;
     ouo_float_t v_float;
     ouo_bool_t v_bool;
+    // Reference-counted
     OuoRc *ref;
   } as;
 } OuoObject;
@@ -545,6 +550,13 @@ typedef struct {
   OuoRc ref;
   OuoString str;
 } OuoRcStr;
+
+/// Owns memory for the chunk.
+typedef struct {
+  OuoRc ref;
+  size_t arity;
+  OuoChunk chunk;
+} OuoRcFn;
 
 #define OUO_VM_STACK_SIZE 256
 
@@ -2016,6 +2028,16 @@ static inline void _ouo_c_emit_loop(
   _ouo_c_emit_byte(c, ast, jump & 0xFF);
 }
 
+// Copy-on-write
+#define _ouo_obj_new_int(v) ((OuoObject){.kind = OUO_OBJ_INT, .as.v_int = (v)})
+
+#define _ouo_obj_new_float(v) \
+  ((OuoObject){.kind = OUO_OBJ_FLOAT, .as.v_float = (v)})
+
+#define _ouo_obj_new_bool(v) \
+  ((OuoObject){.kind = OUO_OBJ_BOOL, .as.v_bool = (v)})
+
+// Reference-counted
 static inline OuoRc *_ouo_rc_new(size_t size) {
   OuoRc *rc = ouo_malloc(size);
   ouo_assert_nomem(rc);
@@ -2031,16 +2053,18 @@ static inline OuoRcStr *_ouo_rc_new_str(void) {
   return rc;
 }
 
-#define _ouo_obj_new_int(v) ((OuoObject){.kind = OUO_OBJ_INT, .as.v_int = (v)})
-
-#define _ouo_obj_new_float(v) \
-  ((OuoObject){.kind = OUO_OBJ_FLOAT, .as.v_float = (v)})
-
-#define _ouo_obj_new_bool(v) \
-  ((OuoObject){.kind = OUO_OBJ_BOOL, .as.v_bool = (v)})
-
 #define _ouo_obj_new_str(rc) \
   ((OuoObject){.kind = OUO_OBJ_STR, .as.ref = (OuoRc *)(rc)})
+
+static inline OuoRcFn *_ouo_rc_new_fn(void) {
+  OuoRcFn *rc = (OuoRcFn *)_ouo_rc_new(sizeof(OuoRcFn));
+  rc->arity = 0;
+  rc->chunk = (OuoChunk){0};
+  return rc;
+}
+
+#define _ouo_obj_new_fn(rc) \
+  ((OuoObject){.kind = OUO_OBJ_FN, .as.ref = (OuoRc *)(rc)})
 
 static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
   switch (ast->kind) {
@@ -2410,7 +2434,7 @@ void ouo_compile(OuoAst *ast, OuoCompileResult *res) {
   ouo_printdbg("\n");
 
 #ifndef OUO_NOEMIT
-  ouo_chunk_dump(&res->chunk, "main");
+  ouo_chunk_dump(&res->chunk);
   ouo_printdbg("\n");
 #endif // OUO_NOEMIT
 #endif // OUO_DEBUG
@@ -2438,12 +2462,19 @@ void ouo_chunk_free(OuoChunk *chunk) {
 
 static inline void _ouo_obj_print(OuoObject *obj) {
   switch (obj->kind) {
+    // Copy-on-write
     case OUO_OBJ_INT: ouo_print("%" OUO_PRId, obj->as.v_int); break;
     case OUO_OBJ_FLOAT: ouo_print("%" OUO_PRIf, obj->as.v_float); break;
     case OUO_OBJ_BOOL: ouo_print(obj->as.v_bool ? "true" : "false"); break;
+    // Reference-counted
     case OUO_OBJ_STR:
       ouo_print("%.*s", _OUO_STR_FMT(((OuoRcStr *)obj->as.ref)->str));
       break;
+    case OUO_OBJ_FN: {
+      OuoRcFn *fn = (OuoRcFn *)obj->as.ref;
+      ouo_print("fn %.*s(%zu)", _OUO_STRSL_FMT(fn->chunk.name), fn->arity);
+      break;
+    }
   }
 }
 
@@ -2555,8 +2586,8 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
   return ip - ip_prev;
 }
 
-void ouo_chunk_dump(OuoChunk *chunk, const char *name) {
-  ouo_printdbg("%s:\n", name);
+void ouo_chunk_dump(OuoChunk *chunk) {
+  ouo_printdbg("%.*s:\n", _OUO_STRSL_FMT(chunk->name));
   if (chunk->items == NULL) {
     ouo_printdbg("(NULL)\n");
     return;
@@ -2606,7 +2637,7 @@ static inline void _ouo_vm_init(
 }
 
 static inline bool _ouo_obj_is_rc(OuoObject *obj) {
-  return obj->kind == OUO_OBJ_STR;
+  return obj->kind == OUO_OBJ_STR || obj->kind == OUO_OBJ_FN;
 }
 
 static inline void _ouo_obj_rc_ref(OuoObject *obj) {
@@ -2636,10 +2667,13 @@ static inline bool _ouo_obj_rc_deref(OuoObject *obj) {
   }
 
   switch (obj->kind) {
+    // Copy-on-write
     case OUO_OBJ_INT:
     case OUO_OBJ_FLOAT:
     case OUO_OBJ_BOOL: break;
+    // Reference-counted
     case OUO_OBJ_STR: ouo_da_free(((OuoRcStr *)rc)->str); break;
+    case OUO_OBJ_FN: ouo_chunk_free(&((OuoRcFn *)rc)->chunk); break;
   }
   ouo_free(rc);
   obj->as.ref = NULL;
@@ -2807,9 +2841,9 @@ static void _ouo_vm_run(_OuoVm *vm) {
 
 #ifdef OUO_DEBUG
     if (vm->res->stack.count != 0) {
-      OUO_DA_FOREACH(OuoObject, slot, &vm->res->stack) {
+      OUO_DA_FOREACH(OuoObject, obj, &vm->res->stack) {
         ouo_printdbg("[");
-        _ouo_obj_dump(slot);
+        _ouo_obj_dump(obj);
         ouo_printdbg("] ");
       }
       ouo_printdbg("\n");

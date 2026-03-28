@@ -89,7 +89,11 @@ static OuoErrorCode start_repl(void) {
   } lines = {0};
 
   OuoParseResult p_res = {0};
-  OuoCompileResult c_res = {.keep_module_scope = true, .echo = true};
+  OuoCompileResult c_res = {
+      .keep_module_scope = true,
+      .echo = true,
+      .chunk.name = {.start = "@repl", .len = 5},
+  };
   OuoInterpretResult vm_res = {0};
 
   for (;;) {
@@ -141,7 +145,7 @@ static OuoErrorCode run_file(const char *path) {
   char *src = read_file(path);
 
   OuoParseResult p_res = {0};
-  OuoCompileResult c_res = {0};
+  OuoCompileResult c_res = {.chunk.name = {.start = path, .len = strlen(path)}};
   OuoInterpretResult vm_res = {0};
 
   OuoErrorCode err_code = run(src, path, &p_res, &c_res, &vm_res);
