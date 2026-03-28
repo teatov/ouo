@@ -36,26 +36,26 @@ int main(void) {
 
   test_parse_exp_ast_expr(TN("identifier"), "ass",
       &(OuoAst){.kind = OUO_AST_IDENT,
-          .k.ident = {.name.str = {.start = "ass", .len = 3}}});
+          .as.ident = {.name.str = {.start = "ass", .len = 3}}});
 
   test_parse_exp_ast_expr(TN("single int"), "2",
-      &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 2});
+      &(OuoAst){.kind = OUO_AST_LIT_INT, .as.lit_int = 2});
 
   test_parse_exp_ast_expr(TN("single float"), "2.5",
-      &(OuoAst){.kind = OUO_AST_LIT_FLOAT, .k.lit_float = 2.5});
+      &(OuoAst){.kind = OUO_AST_LIT_FLOAT, .as.lit_float = 2.5});
 
   test_parse_exp_ast_expr(TN("assign"), "a = 5",
       &(OuoAst){.kind = OUO_AST_ASSIGN,
-          .k.assign = {.target = &(OuoAst){.kind = OUO_AST_IDENT,
-                           .k.ident = {.name.str = {.start = "a", .len = 1}}},
-              .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 5}}});
+          .as.assign = {.target = &(OuoAst){.kind = OUO_AST_IDENT,
+                            .as.ident = {.name.str = {.start = "a", .len = 1}}},
+              .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .as.lit_int = 5}}});
 
   test_parse_exp_ast_expr(TN("bin op"), "2 + 2",
       &(OuoAst){.kind = OUO_AST_BINARY,
-          .k.binary = {
-              .left = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 2},
+          .as.binary = {
+              .left = &(OuoAst){.kind = OUO_AST_LIT_INT, .as.lit_int = 2},
               .op = OUO_TOK_PLUS,
-              .right = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 2}}});
+              .right = &(OuoAst){.kind = OUO_AST_LIT_INT, .as.lit_int = 2}}});
 
   test_parse_fail(TN("unknown symbol fails"), "%");
   test_parse_fail(TN("single operator fails"), "+");
@@ -90,8 +90,8 @@ int main(void) {
 
   test_parse_exp_ast_stmt(TN("variable declaration"), "var a = 5",
       &(OuoAst){.kind = OUO_AST_DECL_VAR,
-          .k.decl_var = {.name.str = {.start = "a", .len = 1},
-              .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 5}}});
+          .as.decl_var = {.name.str = {.start = "a", .len = 1},
+              .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .as.lit_int = 5}}});
 
   test_parse(TN("var decl with type"), "var a: int = 5");
   test_parse_fail(TN("var decl without identifier fails"), "var");
