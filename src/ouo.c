@@ -57,11 +57,7 @@ compile_defer:
 }
 
 static char *read_line(void) {
-  struct {
-    char *items;
-    size_t count;
-    size_t capacity;
-  } buffer = {0};
+  OuoString buffer = {0};
 
   int c = '\0';
   while ((c = getchar()) != EOF) {

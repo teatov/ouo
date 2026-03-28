@@ -76,27 +76,12 @@ static const char *json_tok_str(JsonToken tok) {
 // JSON parsing
 //
 
-typedef struct {
-  const char *start;
-  size_t len;
-} JsonString;
-
-typedef struct {
-  char *items;
-  size_t count;
-  size_t capacity;
-} JsonStringOwned;
-
-static inline JsonString json_str_new(const char *str) {
-  return (JsonString){.start = str, .len = strlen(str)};
-}
-
-static inline bool json_strcmp(JsonString *json_str, const char *str) {
+static inline bool json_str_eq(OuoStringSlice *json_str, const char *str) {
   return json_str->start != NULL &&
       strncmp(json_str->start, str, json_str->len) == 0;
 }
 
-static void json_str_unescaped(JsonStringOwned *owned, JsonString *s) {
+static void json_str_unescaped(OuoString *owned, OuoStringSlice *s) {
   for (const char *c = s->start; c < s->start + s->len; c++) {
     if (*c != '\\' || c + 1 >= s->start + s->len) {
       ouo_da_append(owned, *c);
@@ -126,7 +111,7 @@ typedef struct {
   const char *curr;
   JsonToken tok;
 
-  JsonString string;
+  OuoStringSlice string;
   double number;
   bool boolean;
 
@@ -138,7 +123,7 @@ static inline void _jp_init(JsonParser *jp, const char *src) {
   jp->curr = src;
   jp->tok = JSON_ILLEGAL;
 
-  jp->string = (JsonString){0};
+  jp->string = (OuoStringSlice){0};
   jp->number = 0.0;
   jp->boolean = false;
 
@@ -155,7 +140,7 @@ static inline void _jp_init(JsonParser *jp, const char *src) {
   } while (0)
 
 static inline bool jp_str_eq(JsonParser *jp, const char *str) {
-  return json_strcmp(&jp->string, str);
+  return json_str_eq(&jp->string, str);
 }
 
 static inline bool _jp_is_eof(JsonParser *jp) { return *jp->curr == '\0'; }
@@ -352,9 +337,7 @@ typedef struct {
 } JsonScope;
 
 typedef struct {
-  char *items;
-  size_t count;
-  size_t capacity;
+  OuoString res;
 
   struct {
     JsonScope *items;
@@ -370,7 +353,7 @@ typedef struct {
   } while (0)
 
 static inline void _js_init(JsonSerializer *js) {
-  js->items = NULL;
+  js->res.items = NULL;
   js->scopes.items = NULL;
 }
 
@@ -393,13 +376,13 @@ static inline void _js_scope_pop(JsonSerializer *js) {
 }
 
 static inline void js_raw(JsonSerializer *js, const char *str) {
-  ouo_da_append_many(js, str, strlen(str));
+  ouo_da_append_many(&js->res, str, strlen(str));
 }
 
 static inline void js_str_escaped(
     JsonSerializer *js, const char *str, size_t len) {
   js_raw(js, "\"");
-  ouo_da_append_many(js, str, len);
+  ouo_da_append_many(&js->res, str, len);
   js_raw(js, "\"");
 }
 
@@ -452,14 +435,14 @@ static inline void js_array_end(JsonSerializer *js) {
   _js_element_end(js);
 }
 
-static inline void js_string(JsonSerializer *js, JsonString *value) {
+static inline void js_string(JsonSerializer *js, OuoStringSlice *value) {
   _js_element_begin(js);
   js_str_escaped(js, value->start, value->len);
   _js_element_end(js);
 }
 
 static inline void js_string_raw(JsonSerializer *js, const char *str) {
-  JsonString value = json_str_new(str);
+  OuoStringSlice value = (OuoStringSlice){.start = str, .len = strlen(str)};
   js_string(js, &value);
 }
 
@@ -491,7 +474,7 @@ static inline void js_null(JsonSerializer *js) {
 
 typedef struct {
   long id;
-  JsonString method;
+  OuoStringSlice method;
 
   bool respond;
   bool has_params;
@@ -504,7 +487,7 @@ typedef struct {
 } OuoLs;
 
 static inline void _ls_init(OuoLs *ls, JsonParser *jp, JsonSerializer *js) {
-  ls->method = (JsonString){.start = NULL};
+  ls->method = (OuoStringSlice){.start = NULL};
 
   ls->respond = false;
   ls->has_params = false;
@@ -540,18 +523,18 @@ static inline void _ls_end(OuoLs *ls) {
   js_object_end(ls->js);
   js_raw(ls->js, "\0");
 
-  ouo_print("Content-Length: %zu\r\n\r\n%.*s\r\n", ls->js->count,
-      (int)ls->js->count, ls->js->items);
+  ouo_print("Content-Length: %zu\r\n\r\n%.*s\r\n", ls->js->res.count,
+      (int)ls->js->res.count, ls->js->res.items);
 
   fflush(stdout);
   ouo_da_free(ls->js->scopes);
-  ouo_da_free(*ls->js);
+  ouo_da_free(ls->js->res);
   ouo_printerr("// Flushed!\n");
 }
 
 static void _ls_diagnostic(OuoLs *ls, OuoError *err) {
-  long line = (long)err->line - 1;
-  long col = (long)err->col - 1;
+  long line = (long)err->pos.line - 1;
+  long col = (long)err->pos.col - 1;
 
   js_object_begin(ls->js);
   {
@@ -597,7 +580,7 @@ static void _ls_diagnostic(OuoLs *ls, OuoError *err) {
   js_object_end(ls->js);
 }
 
-static void _ls_analyze(OuoLs *ls, JsonStringOwned *src, JsonString *uri) {
+static void _ls_analyze(OuoLs *ls, OuoString *src, OuoStringSlice *uri) {
   _ls_notification_begin(ls, "textDocument/publishDiagnostics");
 
   js_object_begin(ls->js);
@@ -671,8 +654,8 @@ static bool _ls_initialize(OuoLs *ls) {
 }
 
 static bool _ls_did_open(OuoLs *ls, bool change) {
-  JsonStringOwned src = {0};
-  JsonString uri = {0};
+  OuoString src = {0};
+  OuoStringSlice uri = {0};
 
   while (jp_object_member(ls->jp)) {
     if (jp_str_eq(ls->jp, "textDocument")) {
@@ -724,25 +707,25 @@ static bool _ls_did_open(OuoLs *ls, bool change) {
 }
 
 static bool _ls_handle_method(OuoLs *ls) {
-  if (json_strcmp(&ls->method, "initialize")) return _ls_initialize(ls);
+  if (json_str_eq(&ls->method, "initialize")) return _ls_initialize(ls);
 
-  if (json_strcmp(&ls->method, "textDocument/didOpen"))
+  if (json_str_eq(&ls->method, "textDocument/didOpen"))
     return _ls_did_open(ls, false);
 
-  if (json_strcmp(&ls->method, "textDocument/didChange"))
+  if (json_str_eq(&ls->method, "textDocument/didChange"))
     return _ls_did_open(ls, true);
 
-  if (json_strcmp(&ls->method, "initialized")) {
+  if (json_str_eq(&ls->method, "initialized")) {
     ls->initialized = true;
     ouo_printerr("client initialized!\n");
   }
 
-  if (json_strcmp(&ls->method, "shutdown")) {
+  if (json_str_eq(&ls->method, "shutdown")) {
     ls->shutdown = true;
     ouo_printerr("shutdown!\n");
   }
 
-  if (json_strcmp(&ls->method, "exit")) {
+  if (json_str_eq(&ls->method, "exit")) {
     ls->exit = true;
     ouo_printerr("exit!\n");
   }

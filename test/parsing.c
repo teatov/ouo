@@ -36,7 +36,7 @@ int main(void) {
 
   test_parse_exp_ast_expr(TN("identifier"), "ass",
       &(OuoAst){.kind = OUO_AST_IDENT,
-          .k.ident = {.name = {.start = "ass", .len = 3}}});
+          .k.ident = {.name.str = {.start = "ass", .len = 3}}});
 
   test_parse_exp_ast_expr(TN("single int"), "2",
       &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 2});
@@ -47,7 +47,7 @@ int main(void) {
   test_parse_exp_ast_expr(TN("assign"), "a = 5",
       &(OuoAst){.kind = OUO_AST_ASSIGN,
           .k.assign = {.target = &(OuoAst){.kind = OUO_AST_IDENT,
-                           .k.ident = {.name = {.start = "a", .len = 1}}},
+                           .k.ident = {.name.str = {.start = "a", .len = 1}}},
               .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 5}}});
 
   test_parse_exp_ast_expr(TN("bin op"), "2 + 2",
@@ -90,7 +90,7 @@ int main(void) {
 
   test_parse_exp_ast_stmt(TN("variable declaration"), "var a = 5",
       &(OuoAst){.kind = OUO_AST_DECL_VAR,
-          .k.decl_var = {.name = {.start = "a", .len = 1},
+          .k.decl_var = {.name.str = {.start = "a", .len = 1},
               .value = &(OuoAst){.kind = OUO_AST_LIT_INT, .k.lit_int = 5}}});
 
   test_parse(TN("var decl with type"), "var a: int = 5");

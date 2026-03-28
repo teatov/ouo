@@ -53,6 +53,20 @@ var f: float = 3.14
 var f: float = 314e-2
 ```
 
+- [ ] binary and hex numbers
+
+```ouo
+var x: int = 0b01010101
+var x: int = 0xBADA55
+```
+
+- [x] boolean
+
+```ouo
+var b: bool = true
+var b: bool = false
+```
+
 - [ ] string
 
 ```ouo
@@ -80,26 +94,6 @@ var s: str = ~~"ass~"\n"~~
 var s: str = `ass
   	         `blast
   	         `usa
-```
-
-- [x] boolean
-
-```ouo
-var b: bool = true
-var b: bool = false
-```
-
-- [ ] byte
-
-```ouo
-var x: byte = 64
-```
-
-- [ ] binary and hex literals
-
-```ouo
-var x: byte = 0b01010101
-var x: byte = 0xBADA55
 ```
 
 ### Sum types

@@ -142,6 +142,13 @@
 // Error handling
 //
 
+// line and col start from 1
+typedef struct {
+  size_t line;
+  size_t col;
+  const char *line_start;
+} OuoCodePosition;
+
 typedef enum {
   OUO_OK,
   OUO_ERR_NOTE,
@@ -164,12 +171,8 @@ typedef enum {
 
 typedef struct OuoError {
   OuoErrorCode code;
-
   size_t len;
-  size_t line;
-  size_t col;
-  const char *line_start;
-
+  OuoCodePosition pos;
   char msg[OUO_ERRMSG_SIZE];
 } OuoError;
 
@@ -206,6 +209,18 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path);
 #ifndef ouo_bool_t
 #define ouo_bool_t bool
 #endif // ouo_bool_t
+
+/// Owns memory for `items`.
+typedef struct {
+  char *items;
+  size_t count;
+  size_t capacity;
+} OuoString;
+
+typedef struct {
+  const char *start;
+  size_t len;
+} OuoStringSlice;
 
 typedef enum {
   OUO_TYPE_UNKNOWN,
@@ -265,11 +280,8 @@ typedef enum {
 
 typedef struct {
   OuoTokenKind kind;
-  const char *start;
-  size_t len;
-  size_t line;
-  size_t col;
-  const char *line_start;
+  OuoStringSlice str;
+  OuoCodePosition pos;
 } OuoToken;
 
 #ifdef OUO_DEBUG
@@ -580,13 +592,13 @@ static const char *_ouo_err_code_str(OuoErrorCode err_code) {
 }
 
 void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
-  const char *line_start = err->line_start;
+  const char *line_start = err->pos.line_start;
   size_t line_len = 0;
 
-  if (line_start == NULL && err->line != 0 && src != NULL) {
+  if (line_start == NULL && err->pos.line != 0 && src != NULL) {
     size_t line = 1;
     for (const char *p = src; *p != '\0'; p++) {
-      if (line == err->line) {
+      if (line == err->pos.line) {
         line_start = p;
         break;
       }
@@ -602,8 +614,8 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
 
   ouo_printerr(OUO_ED);
   if (path != NULL) ouo_printerr("%s:", path);
-  ouo_printerr("%zu:", err->line);
-  if (err->col != 0) ouo_printerr("%zu:", err->col);
+  ouo_printerr("%zu:", err->pos.line);
+  if (err->pos.col != 0) ouo_printerr("%zu:", err->pos.col);
   ouo_printerr(OUO_ER "%s %s: " OUO_EBR "%s" OUO_ER,
       err->code == OUO_ERR_NOTE ? OUO_EBD : OUO_EBRED,
       _ouo_err_code_str(err->code), err->msg);
@@ -612,8 +624,8 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
     ouo_printerr("\n%.*s", (int)line_len, line_start);
     if (err->len > 0) {
       ouo_printerr("\n" OUO_ED);
-      if (err->col > 0)
-        for (size_t i = 0; i < err->col - 1; i++) ouo_printerr(" ");
+      if (err->pos.col > 0)
+        for (size_t i = 0; i < err->pos.col - 1; i++) ouo_printerr(" ");
       for (size_t i = 0; i < err->len; i++) ouo_printerr("^");
       ouo_printerr(OUO_ER);
     }
@@ -625,6 +637,13 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
 //
 // Types
 //
+
+#define _OUO_STR_FMT_ARGS(str) (int)(str).count, (str).items
+#define _OUO_STR_SLICE_FMT_ARGS(str) (int)(str).len, (str).start
+
+static inline bool _ouo_str_slice_eq(OuoStringSlice *a, OuoStringSlice *b) {
+  return a->len == b->len && memcmp(a->start, b->start, a->len) == 0;
+}
 
 static const char *_ouo_type_kind_str(OuoTypeKind kind) {
   switch (kind) {
@@ -645,10 +664,10 @@ static const char *_ouo_type_kind_str(OuoTypeKind kind) {
 #define _OUO_TOK_FMT_ARGS(tok) \
   (tok).kind == OUO_TOK_EOF           ? 3 \
       : (tok).kind == OUO_TOK_NEWLINE ? 2 \
-                                      : (int)(tok).len, \
+                                      : (int)(tok).str.len, \
       (tok).kind == OUO_TOK_EOF       ? "EOF" \
       : (tok).kind == OUO_TOK_NEWLINE ? "LF" \
-                                      : (tok).start
+                                      : (tok).str.start
 
 typedef struct {
   const char *tok_start;
@@ -706,11 +725,10 @@ static inline OuoToken _ouo_l_tok_new(_OuoLexer *l, OuoTokenKind kind) {
   size_t len = (size_t)(l->curr - l->tok_start);
   return (OuoToken){
       .kind = kind,
-      .start = l->tok_start,
-      .len = len,
-      .line = l->line,
-      .col = l->col - len,
-      .line_start = l->line_start,
+      .str = {.start = l->tok_start, .len = len},
+      .pos = {.line = l->line,
+          .col = l->col - len,
+          .line_start = l->line_start},
   };
 }
 
@@ -929,10 +947,8 @@ typedef struct _OuoParseRule {
   do { \
     OuoError err = { \
         .code = (err_code), \
-        .len = (tok).len == 0 ? 1 : (tok).len, \
-        .line = (tok).line, \
-        .col = (tok).col, \
-        .line_start = (tok).line_start, \
+        .len = (tok).str.len == 0 ? 1 : (tok).str.len, \
+        .pos = (tok).pos, \
         .msg = {0}, \
     }; \
     _ouo_err_sprintf(err, __VA_ARGS__); \
@@ -1068,7 +1084,7 @@ static OuoAst *_ouo_p_ident(_OuoParser *p) {
 static OuoAst *_ouo_p_lit_int(_OuoParser *p) {
   errno = 0;
   char *end = NULL;
-  ouo_int_t lit = ouo_strtoi(p->curr.start, &end, 10);
+  ouo_int_t lit = ouo_strtoi(p->curr.str.start, &end, 10);
 
   if (errno != 0) {
     _ouo_p_err(p, p->curr, OUO_ERR_PARSE_FAIL,
@@ -1078,10 +1094,10 @@ static OuoAst *_ouo_p_lit_int(_OuoParser *p) {
     return NULL;
   }
 
-  if (end != p->curr.start + p->curr.len) {
+  if (end != p->curr.str.start + p->curr.str.len) {
     _ouo_p_err(p, p->curr, OUO_ERR_PARSE_FAIL,
-        "Integer literal length mismatch. Expected %zu, read %zu.", p->curr.len,
-        end - p->curr.start);
+        "Integer literal length mismatch. Expected %zu, read %zu.",
+        p->curr.str.len, end - p->curr.str.start);
     return NULL;
   }
 
@@ -1093,7 +1109,7 @@ static OuoAst *_ouo_p_lit_int(_OuoParser *p) {
 static OuoAst *_ouo_p_lit_float(_OuoParser *p) {
   errno = 0;
   char *end = NULL;
-  ouo_float_t lit = ouo_strtof(p->curr.start, &end);
+  ouo_float_t lit = ouo_strtof(p->curr.str.start, &end);
 
   if (errno != 0) {
     _ouo_p_err(
@@ -1101,10 +1117,10 @@ static OuoAst *_ouo_p_lit_float(_OuoParser *p) {
     return NULL;
   }
 
-  if (end != p->curr.start + p->curr.len) {
+  if (end != p->curr.str.start + p->curr.str.len) {
     _ouo_p_err(p, p->curr, OUO_ERR_PARSE_FAIL,
-        "Float literal length mismatch. Expected %zu, read %zu.", p->curr.len,
-        end - p->curr.start);
+        "Float literal length mismatch. Expected %zu, read %zu.",
+        p->curr.str.len, end - p->curr.str.start);
     return NULL;
   }
 
@@ -1552,10 +1568,8 @@ typedef struct {
   do { \
     OuoError err = { \
         .code = (err_code), \
-        .len = (tok).len, \
-        .line = (tok).line, \
-        .col = (tok).col, \
-        .line_start = (tok).line_start, \
+        .len = (tok).str.len, \
+        .pos = (tok).pos, \
         .msg = {0}, \
     }; \
     _ouo_err_sprintf(err, __VA_ARGS__); \
@@ -1576,16 +1590,12 @@ static inline void _ouo_c_init(_OuoCompiler *c, OuoCompileResult *res) {
   c->res = res;
 }
 
-static inline bool _ouo_tok_eq(OuoToken *a, OuoToken *b) {
-  return a->len == b->len && memcmp(a->start, b->start, a->len) == 0;
-}
-
 static inline bool _ouo_c_find_sym(
     _OuoCompiler *c, OuoToken *name, size_t *idx) {
   if (c->res->symbols.count == 0) return false;
 
   for (size_t i = c->res->symbols.count - 1; i >= 0; i--) {
-    if (_ouo_tok_eq(name, &c->res->symbols.items[i].name)) {
+    if (_ouo_str_slice_eq(&name->str, &c->res->symbols.items[i].name.str)) {
       *idx = i;
       return true;
     }
@@ -1880,7 +1890,7 @@ static inline size_t _ouo_c_chunk_add_lit(_OuoCompiler *c, OuoObject *obj) {
 
 static inline void _ouo_c_emit_byte(
     _OuoCompiler *c, OuoAst *ast, uint8_t byte) {
-  _ouo_c_chunk_write(c, byte, ast->tok.line);
+  _ouo_c_chunk_write(c, byte, ast->tok.pos.line);
 }
 
 static inline void _ouo_c_emit_bytes2(
@@ -2461,8 +2471,8 @@ typedef struct {
     (vm)->res->failed = true; \
     OuoError error = { \
         .code = (err_code), \
-        .line = _ouo_chunk_get_line((vm)->chunk, (ip)), \
-        .line_start = NULL, \
+        .pos = {.line = _ouo_chunk_get_line((vm)->chunk, (ip)), \
+            .line_start = NULL}, \
         .msg = {0}, \
     }; \
     _ouo_err_sprintf(error, __VA_ARGS__); \

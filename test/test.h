@@ -1,7 +1,7 @@
 #ifndef TEST_H
 #define TEST_H
 
-// #undef OUO_DEBUG
+#undef OUO_DEBUG
 #define OUO_IMPLEMENTATION
 #include "../src/ouo.h"
 
@@ -43,7 +43,7 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
           return false;
       break;
     case OUO_AST_IDENT:
-      _ast_eq_assert(got, _ouo_tok_eq(&exp->k.ident.name, &got->k.ident.name),
+      _ast_eq_assert(got, _ouo_str_slice_eq(&exp->k.ident.name.str, &got->k.ident.name.str),
           "%.*s", _OUO_TOK_FMT_ARGS(exp->k.ident.name),
           _OUO_TOK_FMT_ARGS(got->k.ident.name));
       break;
@@ -88,15 +88,21 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       if (!_ast_eq(exp->k.if_expr.else_branch, got->k.if_expr.else_branch))
         return false;
       break;
+    case OUO_AST_WHILE:
+      if (!_ast_eq(exp->k.while_expr.condition, got->k.while_expr.condition))
+        return false;
+      if (!_ast_eq(exp->k.while_expr.body, got->k.while_expr.body))
+        return false;
+      break;
 
     // Statements
     case OUO_AST_EXPR_STMT:
     case OUO_AST_PRINT:
-      if (!_ast_eq(exp->k.child, got->k.child)) return false;
+      if (!_ast_eq(exp->k.expr_stmt.expr, got->k.expr_stmt.expr)) return false;
       break;
     case OUO_AST_DECL_VAR:
       _ast_eq_assert(got,
-          _ouo_tok_eq(&exp->k.decl_var.name, &got->k.decl_var.name), "%.*s",
+          _ouo_str_slice_eq(&exp->k.decl_var.name.str, &got->k.decl_var.name.str), "%.*s",
           _OUO_TOK_FMT_ARGS(exp->k.decl_var.name),
           _OUO_TOK_FMT_ARGS(got->k.decl_var.name));
       if (!_ast_eq(exp->k.decl_var.value, got->k.decl_var.value)) return false;
@@ -141,7 +147,7 @@ static inline void test(const char *name, const char *src, TestOptions *opt) {
                   .items = &(OuoAst *){opt->exp_ast_stmt
                           ? opt->exp_ast_stmt
                           : &(OuoAst){.kind = OUO_AST_EXPR_STMT,
-                                .k.child = opt->exp_ast_expr}},
+                                .k.expr_stmt.expr = opt->exp_ast_expr}},
               }};
 
     if (_ast_eq(exp_ast, p_res.ast)) {
