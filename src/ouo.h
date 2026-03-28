@@ -1491,6 +1491,7 @@ void ouo_ast_dump(OuoAst *ast) {
 typedef struct {
   bool panic_mode;
   size_t scope_depth;
+  bool noemit;
   OuoCompileResult *res;
 } _OuoCompiler;
 
@@ -2051,7 +2052,7 @@ static inline void _ouo_c_scope_end(_OuoCompiler *c, OuoAst *ast) {
   }
 }
 
-static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
+static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
   if (ast == NULL) return;
   bool new_scope = false;
 
@@ -2066,7 +2067,7 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
       c->panic_mode = false;
       OUO_DA_FOREACH(OuoAst *, stmt, &ast->children) {
         if ((*stmt)->kind == OUO_AST_EXPR_STMT) (*stmt)->k.expr_stmt.pop = true;
-        _ouo_c_ast(c, *stmt, noemit);
+        _ouo_c_ast_visit(c, *stmt);
         c->panic_mode = false;
       }
       c->panic_mode = panic_prev;
@@ -2079,15 +2080,18 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
     case OUO_AST_LIT_BOOL: break;
 
     // Expressions
-    case OUO_AST_ASSIGN:
-      _ouo_c_ast(c, ast->k.assign.target, true);
-      _ouo_c_ast(c, ast->k.assign.value, noemit);
+    case OUO_AST_ASSIGN: {
+      bool noemit_prev = c->noemit;
+      c->noemit = true;
+      _ouo_c_ast_visit(c, ast->k.assign.target);
+      c->noemit = noemit_prev;
+      _ouo_c_ast_visit(c, ast->k.assign.value);
       break;
+    }
     case OUO_AST_BINARY:
-
       switch (ast->k.binary.op) {
         case OUO_TOK_KW_OR: {
-          _ouo_c_ast(c, ast->k.binary.left, noemit);
+          _ouo_c_ast_visit(c, ast->k.binary.left);
 
 #ifndef OUO_NOEMIT
           size_t else_jump = _ouo_c_emit_jump(c, ast, OUO_OP_JUMP_IF_FALSE);
@@ -2096,7 +2100,7 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
           _ouo_c_emit_byte(c, ast, OUO_OP_POP);
 #endif
 
-          _ouo_c_ast(c, ast->k.binary.right, noemit);
+          _ouo_c_ast_visit(c, ast->k.binary.right);
 
 #ifndef OUO_NOEMIT
           _ouo_c_patch_jump(c, ast, end_jump);
@@ -2104,14 +2108,14 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
           break;
         }
         case OUO_TOK_KW_AND: {
-          _ouo_c_ast(c, ast->k.binary.left, noemit);
+          _ouo_c_ast_visit(c, ast->k.binary.left);
 
 #ifndef OUO_NOEMIT
           size_t end_jump = _ouo_c_emit_jump(c, ast, OUO_OP_JUMP_IF_FALSE);
           _ouo_c_emit_byte(c, ast, OUO_OP_POP);
 #endif
 
-          _ouo_c_ast(c, ast->k.binary.right, noemit);
+          _ouo_c_ast_visit(c, ast->k.binary.right);
 
 #ifndef OUO_NOEMIT
           _ouo_c_patch_jump(c, ast, end_jump);
@@ -2119,15 +2123,15 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
           break;
         }
         default:
-          _ouo_c_ast(c, ast->k.binary.left, noemit);
-          _ouo_c_ast(c, ast->k.binary.right, noemit);
+          _ouo_c_ast_visit(c, ast->k.binary.left);
+          _ouo_c_ast_visit(c, ast->k.binary.right);
           break;
       }
       break;
-    case OUO_AST_UNARY: _ouo_c_ast(c, ast->k.unary.right, noemit); break;
+    case OUO_AST_UNARY: _ouo_c_ast_visit(c, ast->k.unary.right); break;
     case OUO_AST_IF: {
       c->panic_mode = false;
-      _ouo_c_ast(c, ast->k.if_expr.condition, noemit);
+      _ouo_c_ast_visit(c, ast->k.if_expr.condition);
       bool panic_prev = c->panic_mode;
 
 #ifndef OUO_NOEMIT
@@ -2137,7 +2141,7 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
 
       c->panic_mode = false;
       _ouo_c_scope_begin(c);
-      _ouo_c_ast(c, ast->k.if_expr.then_branch, noemit);
+      _ouo_c_ast_visit(c, ast->k.if_expr.then_branch);
       _ouo_c_scope_end(c, ast);
 
 #ifndef OUO_NOEMIT
@@ -2149,7 +2153,7 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
       if (ast->k.if_expr.else_branch != NULL) {
         c->panic_mode = false;
         _ouo_c_scope_begin(c);
-        _ouo_c_ast(c, ast->k.if_expr.else_branch, noemit);
+        _ouo_c_ast_visit(c, ast->k.if_expr.else_branch);
         _ouo_c_scope_end(c, ast);
       }
 
@@ -2162,12 +2166,12 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
 
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: _ouo_c_ast(c, ast->k.expr_stmt.expr, noemit); break;
-    case OUO_AST_DECL_VAR: _ouo_c_ast(c, ast->k.decl_var.value, noemit); break;
+    case OUO_AST_PRINT: _ouo_c_ast_visit(c, ast->k.expr_stmt.expr); break;
+    case OUO_AST_DECL_VAR: _ouo_c_ast_visit(c, ast->k.decl_var.value); break;
   }
 
   _ouo_c_ast_analyze(c, ast);
-  if (c->res->failed || noemit) return;
+  if (c->res->failed || c->noemit) return;
 
 #ifndef OUO_NOEMIT
   _ouo_c_ast_emit(c, ast);
@@ -2180,7 +2184,7 @@ void ouo_compile(OuoAst *ast, OuoCompileResult *res) {
   _OuoCompiler c = {0};
   _ouo_c_init(&c, res);
 
-  _ouo_c_ast(&c, ast, false);
+  _ouo_c_ast_visit(&c, ast);
 
 #ifdef OUO_DEBUG
   for (size_t i = 0; i < res->symbols.count; i++) {
