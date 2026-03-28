@@ -303,7 +303,6 @@ typedef struct OuoAst {
   OuoAstKind kind;
   OuoToken tok;
   OuoTypeKind type;
-  bool nopop;
 
   // Common
   struct {
@@ -313,8 +312,6 @@ typedef struct OuoAst {
   } children;
 
   union {
-    struct OuoAst *child;
-
     struct {
       OuoToken name;
       size_t sym_idx;
@@ -349,6 +346,11 @@ typedef struct OuoAst {
     } if_expr;
 
     // Statements
+    struct {
+      struct OuoAst *expr;
+      bool pop;
+    } expr_stmt;
+
     struct {
       OuoToken name;
       OuoTypeKind type_annotation;
@@ -1219,14 +1221,15 @@ static OuoAst *_ouo_p_if(_OuoParser *p) {
 
 static OuoAst *_ouo_p_expr_stmt(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_EXPR_STMT);
-  ast->k.child = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  ast->k.expr_stmt.expr = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  ast->k.expr_stmt.pop = false;
   return ast;
 }
 
 static OuoAst *_ouo_p_print(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_PRINT);
   _ouo_p_advance(p);
-  ast->k.child = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  ast->k.expr_stmt.expr = _ouo_p_expr(p, _OUO_PREC_LOWEST);
   return ast;
 }
 
@@ -1382,7 +1385,7 @@ void ouo_ast_free(OuoAst *ast) {
       break;
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: ouo_ast_free(ast->k.child); break;
+    case OUO_AST_PRINT: ouo_ast_free(ast->k.expr_stmt.expr); break;
     case OUO_AST_DECL_VAR: ouo_ast_free(ast->k.decl_var.value); break;
   }
 
@@ -1465,7 +1468,10 @@ void ouo_ast_dump(OuoAst *ast) {
       break;
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: ouo_ast_dump(ast->k.child); break;
+    case OUO_AST_PRINT:
+      ouo_printdbg("%d ", ast->k.expr_stmt.pop);
+      ouo_ast_dump(ast->k.expr_stmt.expr);
+      break;
     case OUO_AST_DECL_VAR:
       ouo_printdbg("%.*s %s ", _OUO_TOK_FMT_ARGS(ast->k.decl_var.name),
           _ouo_type_kind_str(ast->k.decl_var.type_annotation));
@@ -1747,11 +1753,11 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     }
 
     // Statements
-    case OUO_AST_EXPR_STMT: ast->type = ast->k.child->type; break;
+    case OUO_AST_EXPR_STMT: ast->type = ast->k.expr_stmt.expr->type; break;
     case OUO_AST_PRINT:
       ast->type = OUO_TYPE_VOID;
-      if (ast->k.child->type == OUO_TYPE_VOID)
-        _ouo_c_err_stmt_type(c, &ast->tok, ast->k.child->type);
+      if (ast->k.expr_stmt.expr->type == OUO_TYPE_VOID)
+        _ouo_c_err_stmt_type(c, &ast->tok, ast->k.expr_stmt.expr->type);
       break;
     case OUO_AST_DECL_VAR: {
       ast->type = OUO_TYPE_VOID;
@@ -2013,7 +2019,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
 
     // Statements
     case OUO_AST_EXPR_STMT:
-      if (!ast->nopop && ast->type != OUO_TYPE_VOID) {
+      if (ast->k.expr_stmt.pop && ast->type != OUO_TYPE_VOID) {
         if (c->res->echo && c->scope_depth == 0)
           _ouo_c_emit_byte(c, ast, OUO_OP_PRINT);
         _ouo_c_emit_byte(c, ast, OUO_OP_POP);
@@ -2059,6 +2065,7 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
       bool panic_prev = c->panic_mode;
       c->panic_mode = false;
       OUO_DA_FOREACH(OuoAst *, stmt, &ast->children) {
+        if ((*stmt)->kind == OUO_AST_EXPR_STMT) (*stmt)->k.expr_stmt.pop = true;
         _ouo_c_ast(c, *stmt, noemit);
         c->panic_mode = false;
       }
@@ -2130,7 +2137,6 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
 
       c->panic_mode = false;
       _ouo_c_scope_begin(c);
-      ast->k.if_expr.then_branch->nopop = true;
       _ouo_c_ast(c, ast->k.if_expr.then_branch, noemit);
       _ouo_c_scope_end(c, ast);
 
@@ -2143,7 +2149,6 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
       if (ast->k.if_expr.else_branch != NULL) {
         c->panic_mode = false;
         _ouo_c_scope_begin(c);
-        ast->k.if_expr.else_branch->nopop = true;
         _ouo_c_ast(c, ast->k.if_expr.else_branch, noemit);
         _ouo_c_scope_end(c, ast);
       }
@@ -2157,7 +2162,7 @@ static void _ouo_c_ast(_OuoCompiler *c, OuoAst *ast, bool noemit) {
 
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: _ouo_c_ast(c, ast->k.child, noemit); break;
+    case OUO_AST_PRINT: _ouo_c_ast(c, ast->k.expr_stmt.expr, noemit); break;
     case OUO_AST_DECL_VAR: _ouo_c_ast(c, ast->k.decl_var.value, noemit); break;
   }
 
