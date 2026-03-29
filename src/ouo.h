@@ -274,6 +274,7 @@ typedef enum {
   OUO_TOK_GT_EQ,
   OUO_TOK_BANG,
   // Punctuation
+  OUO_TOK_COMMA,
   OUO_TOK_PAREN_OPN,
   OUO_TOK_PAREN_CLS,
   OUO_TOK_BRACE_OPN,
@@ -322,6 +323,17 @@ typedef enum {
 #ifndef OUO_NOEMIT
 struct OuoChunk;
 #endif
+
+typedef struct {
+  OuoToken name;
+  OuoTypeKind type;
+} OuoAstNameType;
+
+typedef struct {
+  OuoAstNameType *items;
+  size_t count;
+  size_t capacity;
+} OuoAstNameTypes;
 
 /// Owns memory for any child AST nodes.
 typedef struct OuoAst {
@@ -390,6 +402,7 @@ typedef struct OuoAst {
 
     struct {
       OuoToken name;
+      OuoAstNameTypes args;
       OuoTypeKind return_type;
       struct OuoAst *body;
 #ifndef OUO_NOEMIT
@@ -517,6 +530,7 @@ typedef struct {
   } symbols;
 
   OuoErrors errors;
+  OuoStringSlice fn_name;
 } OuoCompileResult;
 
 /// Caller owns the result's `chunk` and `errors`.
@@ -697,8 +711,8 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
   if (path != NULL) ouo_printerr("%s:", path);
   ouo_printerr("%zu:", err->pos.line);
   if (err->pos.col != 0) ouo_printerr("%zu:", err->pos.col);
-  if (err->fn_name.start != NULL)
-    ouo_printerr(" %.*s: ", _OUO_STRSL_FMT(err->fn_name));
+  if (err->fn_name.start != NULL && err->fn_name.len > 0)
+    ouo_printerr(" %.*s:", _OUO_STRSL_FMT(err->fn_name));
   ouo_printerr(OUO_ER "%s %s: " OUO_EBR "%s" OUO_ER,
       err->code == OUO_ERR_NOTE ? OUO_EBD : OUO_EBRED,
       _ouo_err_code_str(err->code), err->msg);
@@ -908,6 +922,7 @@ static OuoToken _ouo_l_next_token(_OuoLexer *l) {
       return _ouo_l_tok_new(
           l, _ouo_l_check_peek(l, '=') ? OUO_TOK_GT_EQ : OUO_TOK_GT);
     // Punctuation
+    case ',': return _ouo_l_tok_new(l, OUO_TOK_COMMA);
     case '(': return _ouo_l_tok_new(l, OUO_TOK_PAREN_OPN);
     case ')': return _ouo_l_tok_new(l, OUO_TOK_PAREN_CLS);
     case '{': return _ouo_l_tok_new(l, OUO_TOK_BRACE_OPN);
@@ -962,6 +977,7 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_GT_EQ: return ">=";
     case OUO_TOK_BANG: return "!";
     // Punctuation
+    case OUO_TOK_COMMA: return ",";
     case OUO_TOK_PAREN_OPN: return "(";
     case OUO_TOK_PAREN_CLS: return ")";
     case OUO_TOK_BRACE_OPN: return "{";
@@ -1415,8 +1431,47 @@ static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
   return ast;
 }
 
+static void _ouo_p_name_types(
+    _OuoParser *p, OuoAstNameTypes *nts, OuoTokenKind end_tok) {
+  while (p->curr.kind != OUO_TOK_EOF) {
+    if (p->curr.kind == end_tok) return;
+
+    if (p->curr.kind != OUO_TOK_IDENT) {
+      _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX,
+          "Expected an identifier, got '%.*s'.", _OUO_TOK_FMT(p->curr));
+      return;
+    }
+
+    OuoToken ident = p->curr;
+    _ouo_p_advance(p);
+
+    if (p->curr.kind != OUO_TOK_COLON) {
+      _ouo_p_err_unexpected(p, p->curr, OUO_TOK_COLON);
+      return;
+    }
+    _ouo_p_advance(p);
+
+    OuoTypeKind type = _ouo_p_type(p);
+    if (type == OUO_TYPE_UNKNOWN) return;
+
+    OuoAstNameType nt = (OuoAstNameType){.name = ident, .type = type};
+    ouo_da_append(nts, nt);
+
+    _ouo_p_advance(p);
+    if (p->curr.kind == OUO_TOK_COMMA) _ouo_p_advance(p);
+    else if (p->curr.kind != end_tok) {
+      _ouo_p_err_unexpected(p, p->curr, OUO_TOK_COMMA);
+      return;
+    }
+  }
+}
+
 static OuoAst *_ouo_p_decl_fn(_OuoParser *p) {
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_DECL_FN);
+  ast->as.decl_fn.args.items = NULL;
+  ast->as.decl_fn.args.count = 0;
+  ast->as.decl_fn.args.capacity = 0;
+
   ast->as.decl_fn.return_type = OUO_TYPE_UNKNOWN;
   ast->as.decl_fn.body = NULL;
 #ifndef OUO_NOEMIT
@@ -1438,8 +1493,13 @@ static OuoAst *_ouo_p_decl_fn(_OuoParser *p) {
     _ouo_p_err_unexpected(p, p->curr, OUO_TOK_PAREN_OPN);
     return ast;
   }
+  bool ignore_newline_prev = p->ignore_newline;
+  p->ignore_newline = true;
   _ouo_p_advance(p);
 
+  _ouo_p_name_types(p, &ast->as.decl_fn.args, OUO_TOK_PAREN_CLS);
+
+  p->ignore_newline = ignore_newline_prev;
   if (p->curr.kind != OUO_TOK_PAREN_CLS) {
     _ouo_p_err_unexpected(p, p->curr, OUO_TOK_PAREN_CLS);
     return ast;
@@ -1596,6 +1656,7 @@ void ouo_ast_free(OuoAst *ast) {
 #ifndef OUO_NOEMIT
       ouo_free(ast->as.decl_fn.chunk);
 #endif
+      ouo_da_free(ast->as.decl_fn.args);
       ouo_ast_free(ast->as.decl_fn.body);
       break;
   }
@@ -1701,8 +1762,12 @@ void ouo_ast_dump(OuoAst *ast) {
       ouo_ast_dump(ast->as.decl_var.value);
       break;
     case OUO_AST_DECL_FN:
-      ouo_printdbg("%.*s %s ", _OUO_TOK_FMT(ast->as.decl_fn.name),
-          _ouo_type_kind_str(ast->as.decl_fn.return_type));
+      ouo_printdbg("%.*s ( ", _OUO_TOK_FMT(ast->as.decl_fn.name));
+      OUO_DA_FOREACH(OuoAstNameType, arg, &ast->as.decl_fn.args) {
+        ouo_printdbg("(%.*s %s) ", _OUO_TOK_FMT(arg->name),
+            _ouo_type_kind_str(arg->type));
+      }
+      ouo_printdbg(") %s (", _ouo_type_kind_str(ast->as.decl_fn.return_type));
       ouo_ast_dump(ast->as.decl_fn.body);
       break;
   }
@@ -1730,6 +1795,7 @@ typedef struct {
         .len = (tok).str.len, \
         .pos = (tok).pos, \
         .msg = {0}, \
+        .fn_name = c->res->fn_name, \
     }; \
     _ouo_err_sprintf(err, __VA_ARGS__); \
     ouo_da_append(&(c)->res->errors, err); \
@@ -1777,7 +1843,7 @@ static inline void _ouo_c_add_sym(
 
   if (c->res->symbols.count > UINT8_MAX) {
     _ouo_c_err(c, *tok, OUO_ERR_COMPILE_FAIL,
-        "Maximum amount of symbols exceeded (max %d).", UINT8_MAX + 1);
+        "Maximum amount of symbols exceeded (max %d).", UINT8_MAX);
     return;
   }
 
@@ -2103,7 +2169,7 @@ static inline void _ouo_c_emit_lit(
     _OuoCompiler *c, OuoAst *ast, OuoObject *obj) {
   if (c->res->chunk.literals.count > UINT8_MAX) {
     _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
-        "Maximum amount of literals exceeded (max %d).", UINT8_MAX + 1);
+        "Maximum amount of literals exceeded (max %d).", UINT8_MAX);
     return;
   }
 
@@ -2357,7 +2423,13 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
       break;
     case OUO_AST_DECL_VAR: break;
     case OUO_AST_DECL_FN: {
+      if (ast->as.decl_fn.args.count > UINT8_MAX) {
+        _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
+            "Maximum amount of arguments exceeded (max %d).", UINT8_MAX);
+        break;
+      }
       OuoRcFn *rc = _ouo_rc_new_fn();
+      rc->arity = ast->as.decl_fn.args.count;
       rc->chunk = *ast->as.decl_fn.chunk;
       _ouo_c_emit_lit(c, ast, &_ouo_obj_new_fn(rc));
       break;
@@ -2536,10 +2608,9 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
       bool panic_prev = c->panic_mode;
       c->panic_mode = false;
 
+      OuoCompileResult c_res = {.fn_name = ast->as.decl_fn.name.str};
 #ifndef OUO_NOEMIT
-      OuoCompileResult c_res = {.chunk.name = ast->as.decl_fn.name.str};
-#else
-      OuoCompileResult c_res = {0};
+      c_res.chunk.name = c_res.fn_name;
 #endif
 
       _ouo_c_scope_begin(c);
@@ -2555,7 +2626,8 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
       }
 
 #ifndef OUO_NOEMIT
-      *ast->as.decl_fn.chunk = c_res.chunk;
+      if (!c_res.failed) *ast->as.decl_fn.chunk = c_res.chunk;
+      else ouo_chunk_free(&c_res.chunk);
 #endif
 
       ouo_da_free(c_res.errors);
