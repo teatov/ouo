@@ -12,11 +12,15 @@
 #include "ouo.h"
 
 static void cleanup(OuoCompileResult *c_res, OuoInterpretResult *i_res) {
-  ouo_da_free(c_res->locals);
-  ouo_da_free(c_res->globals);
+  ouo_da_free(c_res->local_syms);
+  ouo_da_free(c_res->global_syms);
   OUO_DA_FOREACH(OuoObject, obj, &i_res->stack) {
     if (_ouo_obj_is_rc(obj)) _ouo_obj_rc_deref(obj);
   }
+  OUO_DA_FOREACH(OuoObject, obj, &c_res->chunk.globals) {
+    if (_ouo_obj_is_rc(obj)) _ouo_obj_rc_deref(obj);
+  }
+  ouo_da_free(c_res->chunk.globals);
 }
 
 static OuoErrorCode run(const char *src, const char *path,
