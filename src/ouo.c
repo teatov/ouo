@@ -89,11 +89,7 @@ static OuoErrorCode start_repl(void) {
   } lines = {0};
 
   OuoParseResult p_res = {0};
-  OuoCompileResult c_res = {
-      .keep_module_scope = true,
-      .echo = true,
-      .chunk.name = {.start = "@repl", .len = 5},
-  };
+  OuoCompileResult c_res = {.keep_module_scope = true, .echo = true};
   OuoInterpretResult vm_res = {0};
 
   for (;;) {

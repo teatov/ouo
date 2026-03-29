@@ -134,57 +134,6 @@
 #endif // OUO_DEBUG
 
 //
-// Error handling
-//
-
-// line and col start from 1
-typedef struct {
-  size_t line;
-  size_t col;
-  const char *line_start;
-} OuoCodePosition;
-
-typedef enum {
-  OUO_OK,
-  OUO_ERR_NOTE,
-  // General
-  OUO_ERR_OUT_OF_MEMORY,
-  OUO_ERR_DOUBLE_FREE,
-  OUO_ERR_USAGE,
-  OUO_ERR_READ,
-  // Parsing
-  OUO_ERR_PARSE_FAIL,
-  OUO_ERR_SYNTAX,
-  // Compilation
-  OUO_ERR_COMPILE_FAIL,
-  OUO_ERR_SEMANTIC,
-  OUO_ERR_TYPE,
-  // Runtime
-  OUO_ERR_RUNTIME,
-} OuoErrorCode;
-
-#define OUO_ERRMSG_SIZE 256
-
-typedef struct OuoError {
-  OuoErrorCode code;
-  size_t len;
-  OuoCodePosition pos;
-  char msg[OUO_ERRMSG_SIZE];
-} OuoError;
-
-/// Owns memory for `items`.
-typedef struct {
-  struct OuoError *items;
-  size_t count;
-  size_t capacity;
-} OuoErrors;
-
-/// Prints a formatted error message,
-/// pointing at its location in the source code.
-/// If `path` is not `NULL`, adds it before the line and column.
-void ouo_err_msg_print(OuoError *err, const char *src, const char *path);
-
-//
 // Types
 //
 
@@ -227,6 +176,58 @@ typedef enum {
   OUO_TYPE_BOOL,
   OUO_TYPE_STR,
 } OuoTypeKind;
+
+//
+// Error handling
+//
+
+// line and col start from 1
+typedef struct {
+  size_t line;
+  size_t col;
+  const char *line_start;
+} OuoCodePosition;
+
+typedef enum {
+  OUO_OK,
+  OUO_ERR_NOTE,
+  // General
+  OUO_ERR_OUT_OF_MEMORY,
+  OUO_ERR_DOUBLE_FREE,
+  OUO_ERR_USAGE,
+  OUO_ERR_READ,
+  // Parsing
+  OUO_ERR_PARSE_FAIL,
+  OUO_ERR_SYNTAX,
+  // Compilation
+  OUO_ERR_COMPILE_FAIL,
+  OUO_ERR_SEMANTIC,
+  OUO_ERR_TYPE,
+  // Runtime
+  OUO_ERR_RUNTIME,
+} OuoErrorCode;
+
+#define OUO_ERRMSG_SIZE 256
+
+typedef struct OuoError {
+  OuoErrorCode code;
+  size_t len;
+  OuoCodePosition pos;
+  char msg[OUO_ERRMSG_SIZE];
+  OuoStringSlice fn_name;
+} OuoError;
+
+/// Owns memory for `items`.
+typedef struct {
+  struct OuoError *items;
+  size_t count;
+  size_t capacity;
+} OuoErrors;
+
+/// Prints a formatted error message,
+/// pointing at its location in the source code.
+/// If `path` is not `NULL`, adds it before the line and column.
+void ouo_err_msg_print(OuoError *err, const char *src, const char *path);
 
 //
 // Lexing
@@ -558,7 +559,8 @@ typedef struct {
   OuoChunk chunk;
 } OuoRcFn;
 
-#define OUO_VM_STACK_SIZE 256
+#define OUO_FRAMES_SIZE 64
+#define OUO_VM_STACK_SIZE (OUO_FRAMES_SIZE * UINT8_MAX)
 
 /// Owns memory for `errors.items`.
 typedef struct {
@@ -583,6 +585,39 @@ void ouo_interpret(OuoChunk *chunk, OuoInterpretResult *res);
 ////////////////////////////////////////////////////////////////////////////////
 
 #ifdef OUO_IMPLEMENTATION
+//
+// Types
+//
+
+#define _OUO_STR_FMT(str) (int)(str).count, (str).items
+#define _OUO_STRSL_FMT(str) (int)(str).len, (str).start
+
+static inline bool _ouo_str_slice_eq(OuoStringSlice *a, OuoStringSlice *b) {
+  return a->len == b->len && memcmp(a->start, b->start, a->len) == 0;
+}
+
+static inline uint8_t _ouo_utf8_cp_len(const char *p) {
+  unsigned char c = (unsigned char)p[0];
+  if ((c & 0x80) == 0x00) return 1;
+  else if ((c & 0xE0) == 0xC0) return 2;
+  else if ((c & 0xF0) == 0xE0) return 3;
+  else if ((c & 0xF8) == 0xF0) return 4;
+  else return 1;
+}
+
+static const char *_ouo_type_kind_str(OuoTypeKind kind) {
+  switch (kind) {
+    case OUO_TYPE_UNKNOWN: return "unknown";
+    case OUO_TYPE_VOID: return "void";
+    // Scalar
+    case OUO_TYPE_INT: return "int";
+    case OUO_TYPE_FLOAT: return "float";
+    case OUO_TYPE_BOOL: return "bool";
+    case OUO_TYPE_STR: return "str";
+  }
+  return "";
+}
+
 //
 // Error handling
 //
@@ -643,6 +678,8 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
   if (path != NULL) ouo_printerr("%s:", path);
   ouo_printerr("%zu:", err->pos.line);
   if (err->pos.col != 0) ouo_printerr("%zu:", err->pos.col);
+  if (err->fn_name.start != NULL)
+    ouo_printerr(" %.*s: ", _OUO_STRSL_FMT(err->fn_name));
   ouo_printerr(OUO_ER "%s %s: " OUO_EBR "%s" OUO_ER,
       err->code == OUO_ERR_NOTE ? OUO_EBD : OUO_EBRED,
       _ouo_err_code_str(err->code), err->msg);
@@ -659,39 +696,6 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
   }
 
   ouo_printerr("\n");
-}
-
-//
-// Types
-//
-
-#define _OUO_STR_FMT(str) (int)(str).count, (str).items
-#define _OUO_STRSL_FMT(str) (int)(str).len, (str).start
-
-static inline bool _ouo_str_slice_eq(OuoStringSlice *a, OuoStringSlice *b) {
-  return a->len == b->len && memcmp(a->start, b->start, a->len) == 0;
-}
-
-static inline uint8_t _ouo_utf8_cp_len(const char *p) {
-  unsigned char c = (unsigned char)p[0];
-  if ((c & 0x80) == 0x00) return 1;
-  else if ((c & 0xE0) == 0xC0) return 2;
-  else if ((c & 0xF0) == 0xE0) return 3;
-  else if ((c & 0xF8) == 0xF0) return 4;
-  else return 1;
-}
-
-static const char *_ouo_type_kind_str(OuoTypeKind kind) {
-  switch (kind) {
-    case OUO_TYPE_UNKNOWN: return "unknown";
-    case OUO_TYPE_VOID: return "void";
-    // Scalar
-    case OUO_TYPE_INT: return "int";
-    case OUO_TYPE_FLOAT: return "float";
-    case OUO_TYPE_BOOL: return "bool";
-    case OUO_TYPE_STR: return "str";
-  }
-  return "";
 }
 
 //
@@ -2587,7 +2591,8 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
 }
 
 void ouo_chunk_dump(OuoChunk *chunk) {
-  ouo_printdbg("%.*s:\n", _OUO_STRSL_FMT(chunk->name));
+  if (chunk->name.start != NULL)
+    ouo_printdbg("%.*s:\n", _OUO_STRSL_FMT(chunk->name));
   if (chunk->items == NULL) {
     ouo_printdbg("(NULL)\n");
     return;
@@ -2613,17 +2618,25 @@ void ouo_chunk_dump(OuoChunk *chunk) {
 
 typedef struct {
   OuoChunk *chunk;
+  uint8_t *ip;
+  OuoObject *stack;
+} _OuoCallFrame;
+
+typedef struct {
+  _OuoCallFrame frames[OUO_FRAMES_SIZE];
+  size_t frame_count;
   OuoInterpretResult *res;
 } _OuoVm;
 
-#define _ouo_vm_err(vm, ip, err_code, ...) \
+#define _ouo_vm_err(vm, fr, err_code, ...) \
   do { \
     (vm)->res->failed = true; \
     OuoError error = { \
         .code = (err_code), \
-        .pos = {.line = _ouo_chunk_get_line((vm)->chunk, (ip)), \
+        .pos = {.line = _ouo_chunk_get_line((fr)->chunk, (fr)->ip), \
             .line_start = NULL}, \
         .msg = {0}, \
+        .fn_name = fr->chunk->name, \
     }; \
     _ouo_err_sprintf(error, __VA_ARGS__); \
     (vm)->res->error = error; \
@@ -2633,7 +2646,10 @@ static inline void _ouo_vm_init(
     _OuoVm *vm, OuoInterpretResult *res, OuoChunk *chunk) {
   res->failed = false;
   vm->res = res;
-  vm->chunk = chunk;
+  _OuoCallFrame *fr = &vm->frames[vm->frame_count++];
+  fr->chunk = chunk;
+  fr->ip = chunk->items;
+  fr->stack = vm->res->stack.items;
 }
 
 static inline bool _ouo_obj_is_rc(OuoObject *obj) {
@@ -2684,9 +2700,10 @@ static inline bool _ouo_obj_rc_deref(OuoObject *obj) {
   return true;
 }
 
-static inline void _ouo_vm_stack_push(_OuoVm *vm, uint8_t *ip, OuoObject *obj) {
+static inline void _ouo_vm_stack_push(
+    _OuoVm *vm, _OuoCallFrame *fr, OuoObject *obj) {
   if (vm->res->stack.count + 1 >= OUO_VM_STACK_SIZE) {
-    _ouo_vm_err(vm, ip, OUO_ERR_RUNTIME,
+    _ouo_vm_err(vm, fr, OUO_ERR_RUNTIME,
         "Maximum stack size exceeded (max %d).", OUO_VM_STACK_SIZE);
     return;
   }
@@ -2696,9 +2713,9 @@ static inline void _ouo_vm_stack_push(_OuoVm *vm, uint8_t *ip, OuoObject *obj) {
   vm->res->stack.count++;
 }
 
-static inline OuoObject *_ouo_vm_stack_pop(_OuoVm *vm, uint8_t *ip) {
+static inline OuoObject *_ouo_vm_stack_pop(_OuoVm *vm, _OuoCallFrame *fr) {
   if (vm->res->stack.count == 0) {
-    _ouo_vm_err(vm, ip, OUO_ERR_RUNTIME, "Trying to pop empty stack.");
+    _ouo_vm_err(vm, fr, OUO_ERR_RUNTIME, "Trying to pop empty stack.");
     return &vm->res->stack.items[OUO_VM_STACK_SIZE];
   }
 
@@ -2710,9 +2727,9 @@ static inline OuoObject *_ouo_vm_stack_pop(_OuoVm *vm, uint8_t *ip) {
 }
 
 static inline OuoObject *_ouo_vm_stack_peek(
-    _OuoVm *vm, uint8_t *ip, size_t offset) {
+    _OuoVm *vm, _OuoCallFrame *fr, size_t offset) {
   if (offset + 1 > vm->res->stack.count) {
-    _ouo_vm_err(vm, ip, OUO_ERR_RUNTIME,
+    _ouo_vm_err(vm, fr, OUO_ERR_RUNTIME,
         "Trying peek beyond the stack (offset %td, stack size %zu).",
         offset + 1, vm->res->stack.count);
     return &vm->res->stack.items[0];
@@ -2721,120 +2738,118 @@ static inline OuoObject *_ouo_vm_stack_peek(
   return &vm->res->stack.items[vm->res->stack.count - offset - 1];
 }
 
-#define _ouo_vm_read_lit(vm, ip) \
-  ((vm)->chunk->literals.items[_ouo_chunk_read_byte(ip)])
+#define _ouo_frame_read_lit(fr) \
+  ((fr)->chunk->literals.items[_ouo_chunk_read_byte((fr)->ip)])
 
-#define _OUO_VM_BINARY_TO(vm, ip, T, OP, TO) \
+#define _OUO_VM_BIN_TO(vm, fr, T, OP, TO) \
   do { \
-    ouo_##T##_t b = _ouo_vm_stack_pop((vm), (ip))->as.v_##T; \
-    ouo_##T##_t a = _ouo_vm_stack_pop((vm), (ip))->as.v_##T; \
-    _ouo_vm_stack_push((vm), (ip), &_ouo_obj_new_##TO(a OP b)); \
+    ouo_##T##_t b = _ouo_vm_stack_pop((vm), (fr))->as.v_##T; \
+    ouo_##T##_t a = _ouo_vm_stack_pop((vm), (fr))->as.v_##T; \
+    _ouo_vm_stack_push((vm), (fr), &_ouo_obj_new_##TO(a OP b)); \
   } while (0)
 
-#define _OUO_VM_BINARY(vm, ip, T, OP) _OUO_VM_BINARY_TO(vm, ip, T, OP, T)
+#define _OUO_VM_BINARY(vm, fr, T, OP) _OUO_VM_BIN_TO(vm, fr, T, OP, T)
 
-#define _OUO_VM_UNARY(vm, ip, T, OP) \
+#define _OUO_VM_UNARY(vm, fr, T, OP) \
   do { \
-    ouo_##T##_t a = _ouo_vm_stack_pop((vm), (ip))->as.v_##T; \
-    _ouo_vm_stack_push((vm), (ip), &_ouo_obj_new_##T(OP a)); \
+    ouo_##T##_t a = _ouo_vm_stack_pop((vm), (fr))->as.v_##T; \
+    _ouo_vm_stack_push((vm), (fr), &_ouo_obj_new_##T(OP a)); \
   } while (0)
 
 static void _ouo_vm_run(_OuoVm *vm) {
-  OUO_DA_FOREACH(uint8_t, ip, vm->chunk) {
+  _OuoCallFrame *fr = &vm->frames[vm->frame_count - 1];
+
+  for (; fr->ip < fr->chunk->items + fr->chunk->count; ++(fr->ip)) {
     if (vm->res->failed) return;
 
 #ifdef OUO_DEBUG
-    _ouo_chunk_op_dump(vm->chunk, ip);
+    _ouo_chunk_op_dump(fr->chunk, fr->ip);
     ouo_printdbg("\n");
 #endif
 
-    OuoOpCode op_code = (OuoOpCode)*ip;
-    switch (op_code) {
+    switch ((OuoOpCode)(*fr->ip)) {
       // Objects
-      case OUO_OP_POP: _ouo_vm_stack_pop(vm, ip); break;
+      case OUO_OP_POP: _ouo_vm_stack_pop(vm, fr); break;
       case OUO_OP_VAR_GET: {
-        uint8_t idx = _ouo_chunk_read_byte(ip);
-        _ouo_vm_stack_push(vm, ip, &vm->res->stack.items[idx]);
+        uint8_t idx = _ouo_chunk_read_byte(fr->ip);
+        _ouo_vm_stack_push(vm, fr, &fr->stack[idx]);
         break;
       }
       case OUO_OP_VAR_SET: {
-        uint8_t idx = _ouo_chunk_read_byte(ip);
-        vm->res->stack.items[idx] = *_ouo_vm_stack_pop(vm, ip);
+        uint8_t idx = _ouo_chunk_read_byte(fr->ip);
+        fr->stack[idx] = *_ouo_vm_stack_pop(vm, fr);
         break;
       }
       case OUO_OP_LITERAL: {
-        OuoObject lit = _ouo_vm_read_lit(vm, ip);
-        _ouo_vm_stack_push(vm, ip, &lit);
+        OuoObject lit = _ouo_frame_read_lit(fr);
+        _ouo_vm_stack_push(vm, fr, &lit);
         break;
       }
 
       // Arithmetic
-      case OUO_OP_ADD_INT: _OUO_VM_BINARY(vm, ip, int, +); break;
-      case OUO_OP_ADD_FLOAT: _OUO_VM_BINARY(vm, ip, float, +); break;
+      case OUO_OP_ADD_INT: _OUO_VM_BINARY(vm, fr, int, +); break;
+      case OUO_OP_ADD_FLOAT: _OUO_VM_BINARY(vm, fr, float, +); break;
       case OUO_OP_ADD_STR: {
-        OuoRcStr *b = (OuoRcStr *)_ouo_vm_stack_pop(vm, ip)->as.ref;
-        OuoRcStr *a = (OuoRcStr *)_ouo_vm_stack_pop(vm, ip)->as.ref;
+        OuoRcStr *b = (OuoRcStr *)_ouo_vm_stack_pop(vm, fr)->as.ref;
+        OuoRcStr *a = (OuoRcStr *)_ouo_vm_stack_pop(vm, fr)->as.ref;
         OuoRcStr *rc = _ouo_rc_new_str();
         ouo_da_append_many(&rc->str, a->str.items, a->str.count);
         ouo_da_append_many(&rc->str, b->str.items, b->str.count);
-        _ouo_vm_stack_push(vm, ip, &_ouo_obj_new_str(rc));
+        _ouo_vm_stack_push(vm, fr, &_ouo_obj_new_str(rc));
         break;
       }
-      case OUO_OP_SUB_INT: _OUO_VM_BINARY(vm, ip, int, -); break;
-      case OUO_OP_SUB_FLOAT: _OUO_VM_BINARY(vm, ip, float, -); break;
-      case OUO_OP_MULT_INT: _OUO_VM_BINARY(vm, ip, int, *); break;
-      case OUO_OP_MULT_FLOAT: _OUO_VM_BINARY(vm, ip, float, *); break;
-      case OUO_OP_DIV_INT: _OUO_VM_BINARY(vm, ip, int, /); break;
-      case OUO_OP_DIV_FLOAT: _OUO_VM_BINARY(vm, ip, float, /); break;
+      case OUO_OP_SUB_INT: _OUO_VM_BINARY(vm, fr, int, -); break;
+      case OUO_OP_SUB_FLOAT: _OUO_VM_BINARY(vm, fr, float, -); break;
+      case OUO_OP_MULT_INT: _OUO_VM_BINARY(vm, fr, int, *); break;
+      case OUO_OP_MULT_FLOAT: _OUO_VM_BINARY(vm, fr, float, *); break;
+      case OUO_OP_DIV_INT: _OUO_VM_BINARY(vm, fr, int, /); break;
+      case OUO_OP_DIV_FLOAT: _OUO_VM_BINARY(vm, fr, float, /); break;
 
-      case OUO_OP_NEG_INT: _OUO_VM_UNARY(vm, ip, int, -); break;
-      case OUO_OP_NEG_FLOAT: _OUO_VM_UNARY(vm, ip, float, -); break;
+      case OUO_OP_NEG_INT: _OUO_VM_UNARY(vm, fr, int, -); break;
+      case OUO_OP_NEG_FLOAT: _OUO_VM_UNARY(vm, fr, float, -); break;
 
       // Comparison
-      case OUO_OP_EQ_INT: _OUO_VM_BINARY_TO(vm, ip, int, ==, bool); break;
-      case OUO_OP_EQ_FLOAT: _OUO_VM_BINARY_TO(vm, ip, float, ==, bool); break;
-      case OUO_OP_EQ_BOOL: _OUO_VM_BINARY_TO(vm, ip, bool, ==, bool); break;
-      case OUO_OP_NEQ_INT: _OUO_VM_BINARY_TO(vm, ip, int, !=, bool); break;
-      case OUO_OP_NEQ_FLOAT: _OUO_VM_BINARY_TO(vm, ip, float, !=, bool); break;
-      case OUO_OP_NEQ_BOOL: _OUO_VM_BINARY_TO(vm, ip, bool, !=, bool); break;
+      case OUO_OP_EQ_INT: _OUO_VM_BIN_TO(vm, fr, int, ==, bool); break;
+      case OUO_OP_EQ_FLOAT: _OUO_VM_BIN_TO(vm, fr, float, ==, bool); break;
+      case OUO_OP_EQ_BOOL: _OUO_VM_BIN_TO(vm, fr, bool, ==, bool); break;
+      case OUO_OP_NEQ_INT: _OUO_VM_BIN_TO(vm, fr, int, !=, bool); break;
+      case OUO_OP_NEQ_FLOAT: _OUO_VM_BIN_TO(vm, fr, float, !=, bool); break;
+      case OUO_OP_NEQ_BOOL: _OUO_VM_BIN_TO(vm, fr, bool, !=, bool); break;
 
-      case OUO_OP_LT_INT: _OUO_VM_BINARY_TO(vm, ip, int, <, bool); break;
-      case OUO_OP_LT_FLOAT: _OUO_VM_BINARY_TO(vm, ip, float, <, bool); break;
-      case OUO_OP_LT_EQ_INT: _OUO_VM_BINARY_TO(vm, ip, int, <=, bool); break;
-      case OUO_OP_LT_EQ_FLOAT:
-        _OUO_VM_BINARY_TO(vm, ip, float, <=, bool);
-        break;
-      case OUO_OP_GT_INT: _OUO_VM_BINARY_TO(vm, ip, int, >, bool); break;
-      case OUO_OP_GT_FLOAT: _OUO_VM_BINARY_TO(vm, ip, float, >, bool); break;
-      case OUO_OP_GT_EQ_INT: _OUO_VM_BINARY_TO(vm, ip, int, >=, bool); break;
-      case OUO_OP_GT_EQ_FLOAT:
-        _OUO_VM_BINARY_TO(vm, ip, float, >=, bool);
-        break;
+      case OUO_OP_LT_INT: _OUO_VM_BIN_TO(vm, fr, int, <, bool); break;
+      case OUO_OP_LT_FLOAT: _OUO_VM_BIN_TO(vm, fr, float, <, bool); break;
+      case OUO_OP_LT_EQ_INT: _OUO_VM_BIN_TO(vm, fr, int, <=, bool); break;
+      case OUO_OP_LT_EQ_FLOAT: _OUO_VM_BIN_TO(vm, fr, float, <=, bool); break;
+      case OUO_OP_GT_INT: _OUO_VM_BIN_TO(vm, fr, int, >, bool); break;
+      case OUO_OP_GT_FLOAT: _OUO_VM_BIN_TO(vm, fr, float, >, bool); break;
+      case OUO_OP_GT_EQ_INT: _OUO_VM_BIN_TO(vm, fr, int, >=, bool); break;
+      case OUO_OP_GT_EQ_FLOAT: _OUO_VM_BIN_TO(vm, fr, float, >=, bool); break;
 
       // Logic
-      case OUO_OP_NOT: _OUO_VM_UNARY(vm, ip, bool, !); break;
+      case OUO_OP_NOT: _OUO_VM_UNARY(vm, fr, bool, !); break;
 
       // Control flow
       case OUO_OP_JUMP: {
-        uint16_t jump = _ouo_chunk_read_bytes2(ip);
-        ip += jump;
+        uint16_t jump = _ouo_chunk_read_bytes2(fr->ip);
+        fr->ip += jump;
         break;
       }
       case OUO_OP_JUMP_IF_FALSE: {
-        uint16_t jump = _ouo_chunk_read_bytes2(ip);
-        if (!_ouo_vm_stack_peek(vm, ip, 0)->as.v_bool) ip += jump;
+        uint16_t jump = _ouo_chunk_read_bytes2(fr->ip);
+        ouo_printdbg("!! JMP %d, %d %d\n", jump, fr->ip[-1], fr->ip[0]);
+        if (!_ouo_vm_stack_peek(vm, fr, 0)->as.v_bool) fr->ip += jump;
         break;
       }
       case OUO_OP_LOOP: {
-        uint16_t jump = _ouo_chunk_read_bytes2(ip);
-        ip -= jump;
+        uint16_t jump = _ouo_chunk_read_bytes2(fr->ip);
+        fr->ip -= jump;
         break;
       }
-      case OUO_OP_RETURN: _ouo_vm_stack_pop(vm, ip); return;
+      case OUO_OP_RETURN: _ouo_vm_stack_pop(vm, fr); return;
 
       // Input/output
       case OUO_OP_PRINT:
-        _ouo_obj_print(_ouo_vm_stack_peek(vm, ip, 0));
+        _ouo_obj_print(_ouo_vm_stack_peek(vm, fr, 0));
         ouo_print("\n");
         break;
     }
