@@ -12,7 +12,8 @@
 #include "ouo.h"
 
 static void cleanup(OuoCompileResult *c_res, OuoInterpretResult *i_res) {
-  ouo_da_free(c_res->symbols);
+  ouo_da_free(c_res->locals);
+  ouo_da_free(c_res->globals);
   OUO_DA_FOREACH(OuoObject, obj, &i_res->stack) {
     if (_ouo_obj_is_rc(obj)) _ouo_obj_rc_deref(obj);
   }
