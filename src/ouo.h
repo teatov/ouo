@@ -175,6 +175,8 @@ typedef enum {
   OUO_TYPE_FLOAT,
   OUO_TYPE_BOOL,
   OUO_TYPE_STR,
+  // Funtion
+  OUO_TYPE_FN,
 } OuoTypeKind;
 
 //
@@ -251,6 +253,7 @@ typedef enum {
   OUO_TOK_KW_WHILE,
   OUO_TOK_KW_PRINT,
   OUO_TOK_KW_VAR,
+  OUO_TOK_KW_FN,
   // Literals
   OUO_TOK_LIT_INT,
   OUO_TOK_LIT_FLOAT,
@@ -276,6 +279,7 @@ typedef enum {
   OUO_TOK_BRACE_OPN,
   OUO_TOK_BRACE_CLS,
   OUO_TOK_COLON,
+  OUO_TOK_ARROW,
 } OuoTokenKind;
 
 typedef struct {
@@ -312,6 +316,7 @@ typedef enum {
   OUO_AST_EXPR_STMT,
   OUO_AST_PRINT,
   OUO_AST_DECL_VAR,
+  OUO_AST_DECL_FN,
 } OuoAstKind;
 
 /// Owns memory for any child AST nodes.
@@ -378,6 +383,12 @@ typedef struct OuoAst {
       OuoTypeKind type_annotation;
       struct OuoAst *value;
     } decl_var;
+
+    struct {
+      OuoToken name;
+      OuoTypeKind return_type;
+      struct OuoAst *body;
+    } decl_fn;
   } as;
 } OuoAst;
 
@@ -614,6 +625,8 @@ static const char *_ouo_type_kind_str(OuoTypeKind kind) {
     case OUO_TYPE_FLOAT: return "float";
     case OUO_TYPE_BOOL: return "bool";
     case OUO_TYPE_STR: return "str";
+    // Funtion
+    case OUO_TYPE_FN: return "fn";
   }
   return "";
 }
@@ -798,6 +811,7 @@ static OuoToken _ouo_l_read_word(_OuoLexer *l) {
       if (is_long) switch (l->tok_start[1]) {
           case 'l': return _ouo_l_check_kw(l, 2, 3, "oat", OUO_TOK_KW_FLOAT);
           case 'a': return _ouo_l_check_kw(l, 2, 3, "lse", OUO_TOK_LIT_FALSE);
+          case 'n': return _ouo_l_check_kw(l, 1, 1, "n", OUO_TOK_KW_FN);
         }
       break;
     case 'b': return _ouo_l_check_kw(l, 1, 3, "ool", OUO_TOK_KW_BOOL);
@@ -870,8 +884,10 @@ static OuoToken _ouo_l_next_token(_OuoLexer *l) {
     case '"': return _ouo_l_read_string(l);
     // Operators
     case '=':
-      return _ouo_l_tok_new(
-          l, _ouo_l_check_peek(l, '=') ? OUO_TOK_EQ : OUO_TOK_ASSIGN);
+      return _ouo_l_tok_new(l,
+          _ouo_l_check_peek(l, '=')       ? OUO_TOK_EQ
+              : _ouo_l_check_peek(l, '>') ? OUO_TOK_ARROW
+                                          : OUO_TOK_ASSIGN);
     case '+': return _ouo_l_tok_new(l, OUO_TOK_PLUS);
     case '-': return _ouo_l_tok_new(l, OUO_TOK_MINUS);
     case '*': return _ouo_l_tok_new(l, OUO_TOK_ASTERISK);
@@ -917,8 +933,9 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_KW_IF: return "if";
     case OUO_TOK_KW_ELSE: return "else";
     case OUO_TOK_KW_WHILE: return "while";
-    case OUO_TOK_KW_VAR: return "var";
     case OUO_TOK_KW_PRINT: return "print";
+    case OUO_TOK_KW_VAR: return "var";
+    case OUO_TOK_KW_FN: return "fn";
     // Literals
     case OUO_TOK_LIT_INT: return "LIT_INT";
     case OUO_TOK_LIT_FLOAT: return "LIT_FLOAT";
@@ -944,6 +961,7 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_BRACE_OPN: return "{";
     case OUO_TOK_BRACE_CLS: return "}";
     case OUO_TOK_COLON: return ":";
+    case OUO_TOK_ARROW: return "=>";
   }
   return "";
 }
@@ -1392,6 +1410,51 @@ static OuoAst *_ouo_p_decl_var(_OuoParser *p) {
   return ast;
 }
 
+static OuoAst *_ouo_p_decl_fn(_OuoParser *p) {
+  OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_DECL_FN);
+
+  _ouo_p_advance(p);
+  if (p->curr.kind != OUO_TOK_IDENT) {
+    _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX,
+        "Expected an identifier, got '%.*s'.", _OUO_TOK_FMT(p->curr));
+    return ast;
+  }
+
+  OuoToken ident = p->curr;
+  _ouo_p_advance(p);
+
+  if (p->curr.kind != OUO_TOK_PAREN_OPN) {
+    _ouo_p_err_unexpected(p, p->curr, OUO_TOK_PAREN_OPN);
+    return ast;
+  }
+  _ouo_p_advance(p);
+
+  if (p->curr.kind != OUO_TOK_PAREN_CLS) {
+    _ouo_p_err_unexpected(p, p->curr, OUO_TOK_PAREN_CLS);
+    return ast;
+  }
+  _ouo_p_advance(p);
+
+  OuoTypeKind type = OUO_TYPE_UNKNOWN;
+  if (p->curr.kind == OUO_TOK_COLON) {
+    _ouo_p_advance(p);
+    type = _ouo_p_type(p);
+    if (type == OUO_TYPE_UNKNOWN) return ast;
+    _ouo_p_advance(p);
+  }
+
+  if (p->curr.kind != OUO_TOK_ARROW) {
+    _ouo_p_err_unexpected(p, p->curr, OUO_TOK_ARROW);
+    return ast;
+  }
+
+  _ouo_p_advance(p);
+  ast->as.decl_fn.name = ident;
+  ast->as.decl_fn.return_type = type;
+  ast->as.decl_fn.body = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  return ast;
+}
+
 static void _ouo_p_synchronize(_OuoParser *p) {
   p->panic_mode = false;
   while (p->peek.kind != OUO_TOK_EOF) {
@@ -1407,6 +1470,7 @@ static OuoAst *_ouo_p_stmt(_OuoParser *p, bool exp_newline) {
   switch (p->curr.kind) {
     case OUO_TOK_KW_PRINT: ast = _ouo_p_print(p); break;
     case OUO_TOK_KW_VAR: ast = _ouo_p_decl_var(p); break;
+    case OUO_TOK_KW_FN: ast = _ouo_p_decl_fn(p); break;
     default: ast = _ouo_p_expr_stmt(p); break;
   }
 
@@ -1518,6 +1582,7 @@ void ouo_ast_free(OuoAst *ast) {
     case OUO_AST_EXPR_STMT:
     case OUO_AST_PRINT: ouo_ast_free(ast->as.expr_stmt.expr); break;
     case OUO_AST_DECL_VAR: ouo_ast_free(ast->as.decl_var.value); break;
+    case OUO_AST_DECL_FN: ouo_ast_free(ast->as.decl_fn.body); break;
   }
 
   ouo_free(ast);
@@ -1545,6 +1610,7 @@ static const char *_ouo_ast_kind_str(OuoAstKind kind) {
     case OUO_AST_EXPR_STMT: return "EXPR_STMT";
     case OUO_AST_PRINT: return "PRINT";
     case OUO_AST_DECL_VAR: return "DECL_VAR";
+    case OUO_AST_DECL_FN: return "DECL_FN";
   }
   return "";
 }
@@ -1618,6 +1684,11 @@ void ouo_ast_dump(OuoAst *ast) {
       ouo_printdbg("%.*s %s ", _OUO_TOK_FMT(ast->as.decl_var.name),
           _ouo_type_kind_str(ast->as.decl_var.type_annotation));
       ouo_ast_dump(ast->as.decl_var.value);
+      break;
+    case OUO_AST_DECL_FN:
+      ouo_printdbg("%.*s %s ", _OUO_TOK_FMT(ast->as.decl_fn.name),
+          _ouo_type_kind_str(ast->as.decl_fn.return_type));
+      ouo_ast_dump(ast->as.decl_fn.body);
       break;
   }
 
@@ -1700,6 +1771,10 @@ static inline void _ouo_c_add_sym(
 }
 
 // Static analysis
+
+static void _ouo_c_err_todo(_OuoCompiler *c, OuoAst *ast, const char *msg) {
+  _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL, "TODO: %s", msg);
+}
 
 static void _ouo_c_err_ident_undefined(_OuoCompiler *c, OuoAst *ast) {
   _ouo_c_err(c, ast->tok, OUO_ERR_SEMANTIC, "Undefined symbol '%.*s'.",
@@ -1935,6 +2010,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       c->panic_mode = panic_prev;
       break;
     }
+    case OUO_AST_DECL_FN: _ouo_c_err_todo(c, ast, "fn analyze"); break;
   }
 }
 
@@ -2241,6 +2317,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
       _ouo_c_emit_byte(c, ast, OUO_OP_POP);
       break;
     case OUO_AST_DECL_VAR: break;
+    case OUO_AST_DECL_FN: _ouo_c_err_todo(c, ast, "fn emit"); break;
   }
 }
 
@@ -2411,6 +2488,7 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_EXPR_STMT:
     case OUO_AST_PRINT: _ouo_c_ast_visit(c, ast->as.expr_stmt.expr); break;
     case OUO_AST_DECL_VAR: _ouo_c_ast_visit(c, ast->as.decl_var.value); break;
+    case OUO_AST_DECL_FN: _ouo_c_err_todo(c, ast, "fn visit"); break;
   }
 
   _ouo_c_ast_analyze(c, ast);
