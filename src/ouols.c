@@ -208,6 +208,10 @@ static bool _jp_get(JsonParser *jp) {
     jp->string.len = 0;
     while (!_jp_is_eof(jp)) {
       char c = _jp_advance(jp);
+      if (c == '\\' && *jp->curr == '"') {
+        _jp_advance(jp);
+        jp->string.len++;
+      }
       if (c == '"') {
         jp->tok = JSON_STRING;
         return true;
