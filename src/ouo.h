@@ -284,6 +284,7 @@ typedef enum {
   OUO_TOK_KW_PRINT,
   OUO_TOK_KW_VAR,
   OUO_TOK_KW_FN,
+  OUO_TOK_KW_RETURN,
   // Literals
   OUO_TOK_LIT_INT,
   OUO_TOK_LIT_FLOAT,
@@ -353,6 +354,7 @@ typedef enum {
   OUO_AST_PRINT,
   OUO_AST_DECL_VAR,
   OUO_AST_DECL_FN,
+  OUO_AST_RETURN,
 } OuoAstKind;
 
 struct OuoAst;
@@ -379,6 +381,7 @@ typedef struct OuoAst {
   OuoAstKind kind;
   OuoToken tok;
   OuoType type;
+  bool returns;
 
   // Common
   struct {
@@ -950,6 +953,7 @@ static OuoToken _ouo_l_read_word(_OuoLexer *l) {
     case 'e': return _ouo_l_check_kw(l, 1, 3, "lse", OUO_TOK_KW_ELSE);
     case 'w': return _ouo_l_check_kw(l, 1, 4, "hile", OUO_TOK_KW_WHILE);
     case 'p': return _ouo_l_check_kw(l, 1, 4, "rint", OUO_TOK_KW_PRINT);
+    case 'r': return _ouo_l_check_kw(l, 1, 5, "eturn", OUO_TOK_KW_RETURN);
     case 't': return _ouo_l_check_kw(l, 1, 3, "rue", OUO_TOK_LIT_TRUE);
   }
 
@@ -1060,6 +1064,7 @@ static const char *_ouo_tok_kind_str(OuoTokenKind kind) {
     case OUO_TOK_KW_PRINT: return "print";
     case OUO_TOK_KW_VAR: return "var";
     case OUO_TOK_KW_FN: return "fn";
+    case OUO_TOK_KW_RETURN: return "return";
     // Literals
     case OUO_TOK_LIT_INT: return "LIT_INT";
     case OUO_TOK_LIT_FLOAT: return "LIT_FLOAT";
@@ -1200,6 +1205,7 @@ static inline OuoAst *_ouo_ast_new(OuoToken *tok, OuoAstKind kind) {
   ast->kind = kind;
   ast->tok = *tok;
   ast->type.kind = OUO_TYPE_UNKNOWN;
+  ast->returns = false;
 
   ast->children.items = NULL;
   ast->children.count = 0;
@@ -1666,6 +1672,16 @@ static OuoAst *_ouo_p_decl_fn(_OuoParser *p) {
   return ast;
 }
 
+static OuoAst *_ouo_p_return(_OuoParser *p) {
+  OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_RETURN);
+  if (p->peek.kind != OUO_TOK_EOF && p->peek.kind != OUO_TOK_NEWLINE &&
+      p->peek.kind != OUO_TOK_BRACE_CLS) {
+    _ouo_p_advance(p);
+    ast->as.expr_stmt.expr = _ouo_p_expr(p, _OUO_PREC_LOWEST);
+  } else ast->as.expr_stmt.expr = NULL;
+  return ast;
+}
+
 static void _ouo_p_synchronize(_OuoParser *p) {
   p->panic_mode = false;
   while (p->peek.kind != OUO_TOK_EOF) {
@@ -1682,6 +1698,7 @@ static OuoAst *_ouo_p_stmt(_OuoParser *p, bool exp_newline) {
     case OUO_TOK_KW_PRINT: ast = _ouo_p_print(p); break;
     case OUO_TOK_KW_VAR: ast = _ouo_p_decl_var(p); break;
     case OUO_TOK_KW_FN: ast = _ouo_p_decl_fn(p); break;
+    case OUO_TOK_KW_RETURN: ast = _ouo_p_return(p); break;
     default: ast = _ouo_p_expr_stmt(p); break;
   }
 
@@ -1797,7 +1814,8 @@ static void _ouo_ast_free(OuoAst *ast) {
       break;
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: _ouo_ast_free(ast->as.expr_stmt.expr); break;
+    case OUO_AST_PRINT:
+    case OUO_AST_RETURN: _ouo_ast_free(ast->as.expr_stmt.expr); break;
     case OUO_AST_DECL_VAR:
       if (ast->as.decl_var.type_annot != NULL)
         _ouo_ast_free(ast->as.decl_var.type_annot);
@@ -1847,6 +1865,7 @@ static const char *_ouo_ast_kind_str(OuoAstKind kind) {
     case OUO_AST_PRINT: return "PRINT";
     case OUO_AST_DECL_VAR: return "DECL_VAR";
     case OUO_AST_DECL_FN: return "DECL_FN";
+    case OUO_AST_RETURN: return "RETURN";
   }
   return "";
 }
@@ -1925,6 +1944,7 @@ static void _ouo_ast_dump(OuoAst *ast) {
     // Statements
     case OUO_AST_EXPR_STMT:
     case OUO_AST_PRINT:
+    case OUO_AST_RETURN:
       ouo_printdbg("%d ", ast->as.expr_stmt.pop);
       _ouo_ast_dump(ast->as.expr_stmt.expr);
       break;
@@ -2365,7 +2385,9 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
         default: _ouo_c_err_unary_unknown(c, ast); break;
       }
       break;
-    case OUO_AST_BLOCK: ast->type.kind = OUO_TYPE_VOID; break;
+    case OUO_AST_BLOCK:
+      if (!ast->returns) ast->type.kind = OUO_TYPE_VOID;
+      break;
     case OUO_AST_IF: {
       if (ast->as.if_expr.condition->type.kind != OUO_TYPE_BOOL) {
         bool panic_prev = c->panic_mode;
@@ -2432,10 +2454,17 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     // Statements
     case OUO_AST_EXPR_STMT: ast->type = ast->as.expr_stmt.expr->type; break;
     case OUO_AST_PRINT:
+    case OUO_AST_RETURN: {
       ast->type.kind = OUO_TYPE_VOID;
-      if (ast->as.expr_stmt.expr->type.kind == OUO_TYPE_VOID)
+      bool has_expr = ast->as.expr_stmt.expr != NULL;
+      if (has_expr && ast->as.expr_stmt.expr->type.kind == OUO_TYPE_VOID)
         _ouo_c_err_stmt_type(c, &ast->tok, &ast->as.expr_stmt.expr->type);
+      if (ast->kind == OUO_AST_PRINT) break;
+
+      if (has_expr) ast->type = ast->as.expr_stmt.expr->type;
+      if (ast->kind == OUO_AST_RETURN) ast->returns = true;
       break;
+    }
     case OUO_AST_DECL_VAR: {
       ast->type.kind = OUO_TYPE_VOID;
       bool panic_prev = c->panic_mode;
@@ -2821,6 +2850,10 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
             UINT8_MAX);
       }
       break;
+    case OUO_AST_RETURN:
+      _ouo_c_emit_byte(c, ast,
+          ast->as.expr_stmt.expr == NULL ? OUO_OP_RETURN_VOID : OUO_OP_RETURN);
+      break;
   }
 }
 
@@ -2886,6 +2919,10 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
             (stmt)->as.expr_stmt.pop = true;
           _ouo_c_ast_visit(c, stmt);
           c->panic_mode = false;
+          if (stmt->returns && !ast->returns) {
+            ast->returns = true;
+            ast->type = stmt->type;
+          }
         }
       }
 
@@ -3029,7 +3066,11 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
 
     // Statements
     case OUO_AST_EXPR_STMT:
-    case OUO_AST_PRINT: _ouo_c_ast_visit(c, ast->as.expr_stmt.expr); break;
+    case OUO_AST_PRINT:
+    case OUO_AST_RETURN:
+      if (ast->as.expr_stmt.expr != NULL)
+        _ouo_c_ast_visit(c, ast->as.expr_stmt.expr);
+      break;
     case OUO_AST_DECL_VAR:
       if (ast->as.decl_var.type_annot != NULL)
         _ouo_c_ast_visit(c, ast->as.decl_var.type_annot);
