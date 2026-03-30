@@ -477,7 +477,7 @@ void ouo_p_res_free(OuoParseResult *res);
 typedef struct OuoSymbol {
   size_t idx;
   OuoToken name;
-  OuoType type;
+  OuoType *type;
   bool is_global;
   size_t scope_depth;
 } OuoSymbol;
@@ -568,7 +568,7 @@ typedef struct {
   size_t capacity;
 } OuoChunkSymbols;
 
-/// Owns memory for `chunk`, `local_syms`, `global_syms` and `errors`.
+/// Owns memory for `chunk`, `local_syms`, `global_syms`, `types` and `errors`.
 typedef struct {
   bool failed;
   bool keep_module_scope;
@@ -581,6 +581,12 @@ typedef struct {
   OuoChunkSymbols local_syms;
   OuoChunkSymbols global_syms;
 
+  struct {
+    OuoType *items;
+    size_t count;
+    size_t capacity;
+  } types;
+
   OuoErrors errors;
 } OuoCompileResult;
 
@@ -592,7 +598,8 @@ void ouo_compile(OuoAst *ast, OuoCompileResult *res);
 /// and `errors`.
 void ouo_c_res_free(OuoCompileResult *res);
 
-/// Frees the compile result's `local_syms`, `global_syms` and `chunk.globals`.
+/// Frees the compile result's `chunk.globals`, `local_syms`,
+/// `global_syms` and `types`.
 void ouo_c_res_cleanup(OuoCompileResult *res);
 
 #ifndef OUO_NOEMIT
@@ -674,6 +681,10 @@ void ouo_i_res_cleanup(OuoInterpretResult *res);
 //
 // Data types
 //
+
+static void _ouo_type_free(OuoType *type) {
+  if (type->kind == OUO_TYPE_FN) ouo_da_free(type->as.t_fn.args);
+}
 
 static inline bool _ouo_type_is(OuoType *a, OuoType *b) {
   if (a->kind != b->kind) return false;
@@ -1764,7 +1775,7 @@ static void _ouo_ast_free(OuoAst *ast) {
     case OUO_AST_LIT_FLOAT:
     case OUO_AST_LIT_BOOL: break;
     case OUO_AST_LIT_STR: ouo_da_free(ast->as.lit_str); break;
-    case OUO_AST_LIT_TYPE: break;
+    case OUO_AST_LIT_TYPE: _ouo_type_free(&ast->as.lit_type); break;
     // Expressions
     case OUO_AST_ASSIGN:
       _ouo_ast_free(ast->as.assign.target);
@@ -1792,12 +1803,21 @@ static void _ouo_ast_free(OuoAst *ast) {
     // Statements
     case OUO_AST_EXPR_STMT:
     case OUO_AST_PRINT: _ouo_ast_free(ast->as.expr_stmt.expr); break;
-    case OUO_AST_DECL_VAR: _ouo_ast_free(ast->as.decl_var.value); break;
+    case OUO_AST_DECL_VAR:
+      if (ast->as.decl_var.type_annot != NULL)
+        _ouo_ast_free(ast->as.decl_var.type_annot);
+      _ouo_ast_free(ast->as.decl_var.value);
+      break;
     case OUO_AST_DECL_FN:
 #ifndef OUO_NOEMIT
       ouo_free(ast->as.decl_fn.chunk);
 #endif
+      OUO_DA_FOREACH(OuoAstNameType, arg, &ast->as.decl_fn.args) {
+        _ouo_ast_free(arg->type_annot);
+      }
       ouo_da_free(ast->as.decl_fn.args);
+      if (ast->as.decl_fn.return_type_annot != NULL)
+        _ouo_ast_free(ast->as.decl_fn.return_type_annot);
       _ouo_ast_free(ast->as.decl_fn.body);
       break;
   }
@@ -2030,7 +2050,7 @@ static inline OuoSymbol *_ouo_c_chunk_add_sym(
   OuoSymbol sym = (OuoSymbol){
       .idx = syms->count,
       .name = *name,
-      .type = *type,
+      .type = type,
       .is_global = false,
       .scope_depth = c->scope_depth,
   };
@@ -2060,6 +2080,11 @@ static inline OuoSymbol *_ouo_c_add_global_sym(
   OuoSymbol *sym = _ouo_c_chunk_add_sym(c, &c->res->global_syms, name, type);
   if (sym != NULL) sym->is_global = true;
   return sym;
+}
+
+static inline OuoType *_ouo_c_add_type(_OuoCompiler *c, OuoType *type) {
+  ouo_da_append(&c->res->types, *type);
+  return &c->res->types.items[c->res->types.count - 1];
 }
 
 // Static analysis
@@ -2199,7 +2224,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_IDENT: {
       OuoSymbol *sym = NULL;
       if (_ouo_c_find_sym(c, &ast->as.ident.name, &sym)) {
-        ast->type = sym->type;
+        ast->type = *sym->type;
         ast->as.ident.sym = sym;
       } else _ouo_c_err_ident_undefined(c, ast);
       break;
@@ -2377,18 +2402,22 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
           !_ouo_type_is(body_type, return_type))
         _ouo_c_err_fn_type(c, ast);
 
-      OuoType type = (OuoType){
-          .kind = OUO_TYPE_FN,
-          .as.t_fn = {.return_type = return_type, .args = {.count = 0}},
-      };
+      OuoType *type = _ouo_c_add_type(c,
+          &(OuoType){
+              .kind = OUO_TYPE_FN,
+              .as.t_fn = {.return_type = _ouo_c_add_type(c, return_type),
+                  .args = {.count = 0}},
+          });
 
       OUO_DA_FOREACH(OuoAstNameType, arg, &ast->as.decl_fn.args) {
         OuoNameType arg_type = {
-            .name = arg->name.str, .type = &arg->type_annot->as.lit_type};
-        ouo_da_append(&type.as.t_fn.args, arg_type);
+            .name = arg->name.str,
+            .type = _ouo_c_add_type(c, &arg->type_annot->as.lit_type),
+        };
+        ouo_da_append(&type->as.t_fn.args, arg_type);
       }
 
-      _ouo_c_add_global_sym(c, &ast->as.decl_fn.name, &type);
+      _ouo_c_add_global_sym(c, &ast->as.decl_fn.name, type);
       c->panic_mode = panic_prev;
       break;
     }
@@ -2544,7 +2573,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
         _ouo_c_err_ident_no_sym(c, ast);
         break;
       }
-      if (sym->is_global && sym->type.kind == OUO_TYPE_FN)
+      if (sym->is_global && sym->type->kind == OUO_TYPE_FN)
         _ouo_c_emit_bytes2(c, ast, OUO_OP_GET_GLOBAL, (uint8_t)sym->idx);
       else _ouo_c_emit_bytes2(c, ast, OUO_OP_GET, (uint8_t)sym->idx);
       break;
@@ -2996,7 +3025,7 @@ static inline void _ouo_c_compile(_OuoCompiler *c, OuoAst *ast) {
   ouo_printdbg("local syms: ");
   for (size_t i = 0; i < c->res->local_syms.count; i++) {
     OuoSymbol sym = c->res->local_syms.items[i];
-    OuoString type_str = _ouo_type_str(&sym.type);
+    OuoString type_str = _ouo_type_str(sym.type);
     ouo_printdbg("[%zu '%.*s' %.*s (%zu)] ", i, OUO_STR_FMT(type_str),
         OUO_TOK_FMT(sym.name), sym.scope_depth);
     ouo_da_free(type_str);
@@ -3004,7 +3033,7 @@ static inline void _ouo_c_compile(_OuoCompiler *c, OuoAst *ast) {
   ouo_printdbg("\nglobal syms: ");
   for (size_t i = 0; i < c->res->global_syms.count; i++) {
     OuoSymbol sym = c->res->global_syms.items[i];
-    OuoString type_str = _ouo_type_str(&sym.type);
+    OuoString type_str = _ouo_type_str(sym.type);
     ouo_printdbg("[%zu '%.*s' %.*s (%zu)] ", i, OUO_STR_FMT(type_str),
         OUO_TOK_FMT(sym.name), sym.scope_depth);
     ouo_da_free(type_str);
@@ -3035,6 +3064,10 @@ void ouo_c_res_free(OuoCompileResult *res) {
 void ouo_c_res_cleanup(OuoCompileResult *res) {
   ouo_da_free(res->local_syms);
   ouo_da_free(res->global_syms);
+
+  OUO_DA_FOREACH(OuoType, type, &res->types) { _ouo_type_free(type); }
+  ouo_da_free(res->types);
+
 #ifndef OUO_NOEMIT
   OUO_DA_FOREACH(OuoObject, obj, &res->chunk.globals) {
     if (_ouo_obj_is_rc(obj)) _ouo_obj_rc_deref(obj);
