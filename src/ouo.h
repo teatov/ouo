@@ -2487,6 +2487,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       break;
     }
     case OUO_AST_DECL_FN: {
+      if (ast->type.kind != OUO_TYPE_UNKNOWN) break;
       ast->type.kind = OUO_TYPE_VOID;
       bool panic_prev = c->panic_mode;
       c->panic_mode = false;
@@ -2821,14 +2822,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_BLOCK: break;
     case OUO_AST_IF: break;
     case OUO_AST_WHILE: break;
-    case OUO_AST_CALL:
-      if (ast->children.count > UINT8_MAX) {
-        _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
-            "Maximum amount of call arguments exceeded (max %d).", UINT8_MAX);
-        break;
-      }
-      _ouo_c_emit_bytes2(c, ast, OUO_OP_CALL, (uint8_t)ast->children.count);
-      break;
+    case OUO_AST_CALL: _ouo_c_emit_byte(c, ast, OUO_OP_CALL); break;
 
     // Statements
     case OUO_AST_EXPR_STMT:
@@ -3051,8 +3045,6 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
     }
     case OUO_AST_CALL: {
       c->panic_mode = false;
-      _ouo_c_ast_visit(c, ast->as.call.target);
-      bool panic_prev = c->panic_mode;
 
       c->panic_mode = false;
       OUO_DA_FOREACH(OuoAst *, expr_p, &ast->children) {
@@ -3060,7 +3052,7 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
         c->panic_mode = false;
       }
 
-      c->panic_mode = panic_prev;
+      _ouo_c_ast_visit(c, ast->as.call.target);
       break;
     }
 
@@ -3083,11 +3075,20 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
       if (ast->as.decl_fn.return_type_annot != NULL)
         _ouo_c_ast_visit(c, ast->as.decl_fn.return_type_annot);
 
-      OuoCompileResult fn_res = {
+      _ouo_c_ast_analyze(c, ast);
+
+#ifndef OUO_NOEMIT
+      OuoRcFn *rc = _ouo_rc_new_fn();
+      rc->arity = ast->as.decl_fn.params.count;
+      _ouo_c_add_global(c, ast, &_ouo_obj_new_fn(rc));
+#endif
+
+      OuoCompileResult fn_res = {.global_syms = c->res->global_syms,
           .types = c->res->types,
           .errors = c->res->errors,
 #ifndef OUO_NOEMIT
-          .chunk.name = ast->as.decl_fn.name.str,
+          .chunk = {.name = ast->as.decl_fn.name.str,
+              .globals = c->res->chunk.globals}
 #endif
       };
 
@@ -3101,22 +3102,21 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
       }
 
       _ouo_c_compile(&fn_c, ast->as.decl_fn.body);
-#ifndef OUO_NOEMIT
-      _ouo_c_emit_byte(&fn_c, ast,
-          ast->as.decl_fn.body->type.kind == OUO_TYPE_VOID ? OUO_OP_RETURN_VOID
-                                                           : OUO_OP_RETURN);
-#endif
 
       c->res->failed = fn_res.failed;
+      c->res->global_syms = fn_res.global_syms;
       c->res->types = fn_res.types;
       c->res->errors = fn_res.errors;
 
 #ifndef OUO_NOEMIT
+      c->res->chunk.globals = fn_res.chunk.globals;
       if (!fn_res.failed) {
-        OuoRcFn *rc = _ouo_rc_new_fn();
-        rc->arity = ast->as.decl_fn.params.count;
+        _ouo_c_emit_byte(&fn_c, ast,
+            ast->as.decl_fn.body->type.kind == OUO_TYPE_VOID
+                ? OUO_OP_RETURN_VOID
+                : OUO_OP_RETURN);
+
         rc->chunk = fn_res.chunk;
-        _ouo_c_add_global(c, ast, &_ouo_obj_new_fn(rc));
       } else {
         _ouo_chunk_free(&fn_res.chunk);
         _ouo_chunk_cleanup(&fn_res.chunk);
@@ -3183,11 +3183,11 @@ void ouo_c_res_free(OuoCompileResult *res) {
 
 static void _ouo_c_res_cleanup(OuoCompileResult *res) {
   ouo_da_free(res->local_syms);
-  ouo_da_free(res->global_syms);
 }
 
 void ouo_c_res_cleanup(OuoCompileResult *res) {
   _ouo_c_res_cleanup(res);
+  ouo_da_free(res->global_syms);
 
   OUO_DA_FOREACH(OuoType, type, &res->types) { _ouo_type_free(type); }
   ouo_da_free(res->types);
@@ -3348,11 +3348,7 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
           ip_idx + 3 + jump * (op_code == OUO_OP_LOOP ? -1 : 1));
       break;
     }
-    case OUO_OP_CALL: {
-      uint8_t args = _ouo_chunk_read_byte(ip);
-      ouo_printdbg("%4d ", args);
-      break;
-    }
+    case OUO_OP_CALL: break;
     default: break;
   }
 
@@ -3417,7 +3413,6 @@ typedef struct {
         .pos = {.line = _ouo_chunk_get_line((fr)->chunk, (fr)->ip), \
             .line_start = NULL}, \
         .msg = {0}, \
-        .fn_name = fr->chunk->name, \
     }; \
     _ouo_err_sprintf(error, __VA_ARGS__); \
     (vm)->res->error = error; \
@@ -3502,6 +3497,8 @@ static inline void _ouo_vm_stack_push_noref(
         "Maximum stack size exceeded (max %d).", OUO_VM_STACK_SIZE);
     return;
   }
+#else
+  (void)fr;
 #endif
 
   *vm->res->stack.top = *obj;
@@ -3521,6 +3518,8 @@ static inline OuoObject *_ouo_vm_stack_pop_noderef(
     _ouo_vm_err(vm, fr, OUO_ERR_RUNTIME, "Trying to pop empty stack.");
     return &vm->res->stack.items[OUO_VM_STACK_SIZE];
   }
+#else
+  (void)fr;
 #endif
 
   vm->res->stack.top--;
@@ -3535,14 +3534,16 @@ static inline OuoObject *_ouo_vm_stack_pop(_OuoVm *vm, _OuoCallFrame *fr) {
 }
 
 static inline OuoObject *_ouo_vm_stack_peek(
-    _OuoVm *vm, _OuoCallFrame *fr, ptrdiff_t offset) {
+    _OuoVm *vm, _OuoCallFrame *fr, size_t offset) {
 #ifdef OUO_DEBUG
-  if (offset + 1 > vm->res->stack.top - vm->res->stack.items) {
+  if ((ptrdiff_t)offset + 1 > vm->res->stack.top - vm->res->stack.items) {
     _ouo_vm_err(vm, fr, OUO_ERR_RUNTIME,
         "Trying to peek beyond the stack (offset %td, stack size %zu).",
         offset + 1, vm->res->stack.top - vm->res->stack.items);
     return &vm->res->stack.items[0];
   }
+#else
+  (void)fr;
 #endif
 
   return &vm->res->stack.top[-offset - 1];
@@ -3667,14 +3668,17 @@ static void _ouo_vm_run(_OuoVm *vm) {
         break;
       }
       case OUO_OP_CALL: {
-        uint8_t args = _ouo_chunk_read_byte(fr->ip);
-        OuoRcFn *fn = (OuoRcFn *)_ouo_vm_stack_peek(vm, fr, args)->as.ref;
-        for (ptrdiff_t i = 0; i < args; i++) {
+        if (vm->frame_count == OUO_FRAMES_SIZE) {
+          _ouo_vm_err(vm, fr, OUO_ERR_RUNTIME, "Stack overflow.");
+          return;
+        }
+        OuoRcFn *fn = (OuoRcFn *)_ouo_vm_stack_pop(vm, fr)->as.ref;
+        for (size_t i = 0; i < fn->arity; i++) {
           OuoObject *obj = _ouo_vm_stack_peek(vm, fr, i);
           _ouo_obj_deref(obj);
         }
         _OuoCallFrame *new_fr = &vm->frames[vm->frame_count++];
-        _ouo_vm_frame_init(vm, new_fr, &fn->chunk, args);
+        _ouo_vm_frame_init(vm, new_fr, &fn->chunk, fn->arity);
         fr = &vm->frames[vm->frame_count - 1];
         fr->ip--;
         break;
@@ -3686,7 +3690,6 @@ static void _ouo_vm_run(_OuoVm *vm) {
         vm->frame_count--;
         if (vm->frame_count == 0) return;
         vm->res->stack.top = fr->stack_top;
-        _ouo_vm_stack_pop(vm, fr);
         if (op != OUO_OP_RETURN_VOID) _ouo_vm_stack_push_noref(vm, fr, res);
         fr = &vm->frames[vm->frame_count - 1];
         break;
