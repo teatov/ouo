@@ -44,9 +44,9 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       break;
     case OUO_AST_IDENT:
       _ast_eq_assert(got,
-          _ouo_str_slice_eq(&exp->as.ident.name.str, &got->as.ident.name.str),
-          "%.*s", _OUO_TOK_FMT(exp->as.ident.name),
-          _OUO_TOK_FMT(got->as.ident.name));
+          ouo_str_slice_eq(&exp->as.ident.name.str, &got->as.ident.name.str),
+          "%.*s", OUO_TOK_FMT(exp->as.ident.name),
+          OUO_TOK_FMT(got->as.ident.name));
       break;
 
     // Literals
@@ -75,17 +75,18 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       if (!_ast_eq(exp->as.assign.value, got->as.assign.value)) return false;
       break;
     case OUO_AST_BINARY:
-      _ast_eq_assert(got, exp->as.binary.op == got->as.binary.op, "%s",
-          _ouo_tok_kind_str(exp->as.binary.op),
-          _ouo_tok_kind_str(got->as.binary.op));
+      _ast_eq_assert(got, exp->as.binary.op == got->as.binary.op, "%d",
+          exp->as.binary.op, got->as.binary.op);
       if (!_ast_eq(exp->as.binary.left, got->as.binary.left)) return false;
       if (!_ast_eq(exp->as.binary.right, got->as.binary.right)) return false;
       break;
     case OUO_AST_UNARY:
-      _ast_eq_assert(got, exp->as.unary.op == got->as.unary.op, "%s",
-          _ouo_tok_kind_str(exp->as.unary.op),
-          _ouo_tok_kind_str(got->as.unary.op));
+      _ast_eq_assert(got, exp->as.unary.op == got->as.unary.op, "%d",
+          exp->as.unary.op, got->as.unary.op);
       if (!_ast_eq(exp->as.unary.right, got->as.unary.right)) return false;
+      break;
+    case OUO_AST_CALL:
+      if (!_ast_eq(exp->as.call.target, got->as.call.target)) return false;
       break;
     case OUO_AST_IF:
       if (!_ast_eq(exp->as.if_expr.condition, got->as.if_expr.condition))
@@ -110,12 +111,20 @@ static bool _ast_eq(OuoAst *exp, OuoAst *got) {
       break;
     case OUO_AST_DECL_VAR:
       _ast_eq_assert(got,
-          _ouo_str_slice_eq(
+          ouo_str_slice_eq(
               &exp->as.decl_var.name.str, &got->as.decl_var.name.str),
-          "%.*s", _OUO_TOK_FMT(exp->as.decl_var.name),
-          _OUO_TOK_FMT(got->as.decl_var.name));
+          "%.*s", OUO_TOK_FMT(exp->as.decl_var.name),
+          OUO_TOK_FMT(got->as.decl_var.name));
       if (!_ast_eq(exp->as.decl_var.value, got->as.decl_var.value))
         return false;
+      break;
+    case OUO_AST_DECL_FN:
+      _ast_eq_assert(got,
+          ouo_str_slice_eq(
+              &exp->as.decl_fn.name.str, &got->as.decl_fn.name.str),
+          "%.*s", OUO_TOK_FMT(exp->as.decl_fn.name),
+          OUO_TOK_FMT(got->as.decl_fn.name));
+      if (!_ast_eq(exp->as.decl_fn.body, got->as.decl_fn.body)) return false;
       break;
   }
 
@@ -172,8 +181,7 @@ static inline void test(const char *name, const char *src, TestOptions *opt) {
   }
 
 parse_defer:
-  ouo_ast_free(p_res.ast);
-  ouo_da_free(p_res.errors);
+  ouo_p_res_free(&p_res);
 
   total++;
   if (pass) passes++;

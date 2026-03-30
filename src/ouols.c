@@ -524,7 +524,7 @@ static inline void _ls_end(OuoLs *ls) {
   js_raw(ls->js, "\0");
 
   ouo_print("Content-Length: %zu\r\n\r\n%.*s\r\n", ls->js->res.count,
-      _OUO_STR_FMT(ls->js->res));
+      OUO_STR_FMT(ls->js->res));
 
   fflush(stdout);
   ouo_da_free(ls->js->scopes);
@@ -605,11 +605,11 @@ static void _ls_analyze(OuoLs *ls, OuoString *src, OuoStringSlice *uri) {
           }
         }
 
-        ouo_da_free(c_res.errors);
+        ouo_c_res_free(&c_res);
+        ouo_c_res_cleanup(&c_res);
       }
 
-      ouo_ast_free(p_res.ast);
-      ouo_da_free(p_res.errors);
+      ouo_p_res_free(&p_res);
     }
     js_array_end(ls->js);
 
@@ -684,7 +684,7 @@ static bool _ls_did_open(OuoLs *ls, bool change) {
             json_str_unescaped(&src, &ls->jp->string);
           } else {
             _jp_err(ls->jp, "Unexpected object key %.*s",
-                _OUO_STRSL_FMT(ls->jp->string));
+                OUO_STRSL_FMT(ls->jp->string));
             return false;
           }
         }
@@ -751,7 +751,7 @@ static bool _ls_handle_request(OuoLs *ls) {
       if (!jp_string(ls->jp)) return false;
       if (!jp_str_eq(ls->jp, "2.0")) {
         ouo_printerr("Unknown JSON-RPC version '%.*s'.\n",
-            _OUO_STRSL_FMT(ls->jp->string));
+            OUO_STRSL_FMT(ls->jp->string));
         return false;
       }
     } else if (jp_str_eq(ls->jp, "id")) {
