@@ -374,7 +374,7 @@ struct OuoSymbol;
 struct OuoChunk;
 #endif
 
-/// Owns memory for any child `ast` nodes and their `chunk` fields.
+/// Owns memory for any child AST nodes.
 typedef struct OuoAst {
   OuoAstKind kind;
   OuoToken tok;
@@ -449,9 +449,6 @@ typedef struct OuoAst {
       OuoAstNameTypes args;
       struct OuoAst *return_type_annot;
       struct OuoAst *body;
-#ifndef OUO_NOEMIT
-      struct OuoChunk *chunk;
-#endif
     } decl_fn;
   } as;
 } OuoAst;
@@ -1620,10 +1617,6 @@ static OuoAst *_ouo_p_decl_fn(_OuoParser *p) {
 
   ast->as.decl_fn.return_type_annot = NULL;
   ast->as.decl_fn.body = NULL;
-#ifndef OUO_NOEMIT
-  ast->as.decl_fn.chunk = ouo_malloc(sizeof(OuoChunk));
-  ouo_assert_nomem(ast->as.decl_fn.chunk);
-#endif
 
   _ouo_p_advance(p);
   if (p->curr.kind != OUO_TOK_IDENT) {
@@ -1809,9 +1802,6 @@ static void _ouo_ast_free(OuoAst *ast) {
       _ouo_ast_free(ast->as.decl_var.value);
       break;
     case OUO_AST_DECL_FN:
-#ifndef OUO_NOEMIT
-      ouo_free(ast->as.decl_fn.chunk);
-#endif
       OUO_DA_FOREACH(OuoAstNameType, arg, &ast->as.decl_fn.args) {
         _ouo_ast_free(arg->type_annot);
       }
@@ -2753,18 +2743,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
       _ouo_c_emit_byte(c, ast, OUO_OP_POP);
       break;
     case OUO_AST_DECL_VAR: break;
-    case OUO_AST_DECL_FN: {
-      if (ast->as.decl_fn.args.count > UINT8_MAX) {
-        _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
-            "Maximum amount of arguments exceeded (max %d).", UINT8_MAX);
-        break;
-      }
-      OuoRcFn *rc = _ouo_rc_new_fn();
-      rc->arity = ast->as.decl_fn.args.count;
-      rc->chunk = *ast->as.decl_fn.chunk;
-      _ouo_c_add_global(c, ast, &_ouo_obj_new_fn(rc));
-      break;
-    }
+    case OUO_AST_DECL_FN: break;
   }
 }
 
@@ -2967,6 +2946,13 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
       _ouo_c_ast_visit(c, ast->as.decl_var.value);
       break;
     case OUO_AST_DECL_FN: {
+#ifndef OUO_NOEMIT
+      if (ast->as.decl_fn.args.count > UINT8_MAX) {
+        _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
+            "Maximum amount of arguments exceeded (max %d).", UINT8_MAX);
+      }
+#endif
+
       OUO_DA_FOREACH(OuoAstNameType, arg, &ast->as.decl_fn.args) {
         _ouo_c_ast_visit(c, arg->type_annot);
       }
@@ -2997,9 +2983,13 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast) {
       }
 
 #ifndef OUO_NOEMIT
-      if (!fn_res.failed) *ast->as.decl_fn.chunk = fn_res.chunk;
-      else _ouo_chunk_free(&fn_res.chunk);
-#endif
+      if (!fn_res.failed) {
+        OuoRcFn *rc = _ouo_rc_new_fn();
+        rc->arity = ast->as.decl_fn.args.count;
+        rc->chunk = fn_res.chunk;
+        _ouo_c_add_global(c, ast, &_ouo_obj_new_fn(rc));
+      } else _ouo_chunk_free(&fn_res.chunk);
+#endif // OUO_NOEMIT
 
       ouo_da_free(fn_res.errors);
       ouo_da_free(fn_res.local_syms);
