@@ -2007,6 +2007,7 @@ typedef struct {
     } \
   } while (0)
 
+static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent);
 static inline void _ouo_c_compile(_OuoCompiler *c, OuoAst *ast);
 static void _ouo_c_res_cleanup(OuoCompileResult *res);
 
@@ -2282,7 +2283,7 @@ static inline bool _ouo_ast_unary_is(OuoAst *ast, OuoTypeKind type_kind) {
 
 static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
   if (ast->type.kind != OUO_TYPE_UNKNOWN) return;
-  
+
   switch (ast->kind) {
     case OUO_AST_MODULE: ast->type.kind = OUO_TYPE_VOID; break;
     case OUO_AST_IDENT: {
@@ -2501,32 +2502,23 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       bool panic_prev = c->panic_mode;
       c->panic_mode = false;
 
-      OuoType *body_type = ast->as.decl_fn.body->returns != NULL
-          ? ast->as.decl_fn.body->returns
-          : &ast->as.decl_fn.body->type;
-      OuoType *return_type = ast->as.decl_fn.return_type_annot != NULL
-          ? &ast->as.decl_fn.return_type_annot->as.lit_type
+      OuoAst *body = ast->as.decl_fn.body;
+      OuoAst *return_type_annot = ast->as.decl_fn.return_type_annot;
+
+      OuoType *body_type = body->returns != NULL ? body->returns : &body->type;
+      OuoType *return_type = return_type_annot != NULL
+          ? &return_type_annot->as.lit_type
           : body_type;
 
       if (body_type->kind != OUO_TYPE_UNKNOWN &&
           !_ouo_type_is(body_type, return_type))
         _ouo_c_err_fn_type(c, ast, return_type, body_type);
-
-      OuoType type = (OuoType){
-          .kind = OUO_TYPE_FN,
-          .as.t_fn = {.return_type = _ouo_c_add_type(c, return_type),
-              .params = {.count = 0}},
-      };
-
-      OUO_DA_FOREACH(OuoAstNameType, param, &ast->as.decl_fn.params) {
-        OuoNameType param_type = {
-            .name = param->name.str,
-            .type = _ouo_c_add_type(c, &param->type_annot->as.lit_type),
-        };
-        ouo_da_append(&type.as.t_fn.params, param_type);
+      else if (return_type_annot == NULL) {
+        OuoSymbol *sym = NULL;
+        _ouo_chunk_find_sym(&c->res->global_syms, &ast->as.decl_fn.name, &sym);
+        if (sym != NULL) *sym->type->as.t_fn.return_type = *body_type;
       }
 
-      _ouo_c_add_global_sym(c, &ast->as.decl_fn.name, &type);
       c->panic_mode = panic_prev;
       break;
     }
@@ -2895,6 +2887,39 @@ static inline bool _ouo_ast_is_global(OuoAst *ast) {
   return ast->kind == OUO_AST_DECL_FN;
 }
 
+static void _ouo_c_ast_visit_global(_OuoCompiler *c, OuoAst *ast) {
+  c->panic_mode = false;
+  if (ast->kind == OUO_AST_DECL_FN) {
+    OUO_DA_FOREACH(OuoAstNameType, param, &ast->as.decl_fn.params) {
+      _ouo_c_ast_visit(c, param->type_annot, ast);
+    }
+    if (ast->as.decl_fn.return_type_annot != NULL) {
+      _ouo_c_ast_visit(c, ast->as.decl_fn.return_type_annot, ast);
+      ast->as.decl_fn.body->returns =
+          &ast->as.decl_fn.return_type_annot->as.lit_type;
+    }
+
+    OuoAst *type_annot = ast->as.decl_fn.return_type_annot;
+    OuoType fn_type = (OuoType){
+        .kind = OUO_TYPE_FN,
+        .as.t_fn = {.return_type = _ouo_c_add_type(c,
+                        type_annot != NULL
+                            ? &type_annot->as.lit_type
+                            : &(OuoType){.kind = OUO_TYPE_UNKNOWN})},
+    };
+
+    OUO_DA_FOREACH(OuoAstNameType, param, &ast->as.decl_fn.params) {
+      OuoNameType param_type = {
+          .name = param->name.str,
+          .type = _ouo_c_add_type(c, &param->type_annot->as.lit_type),
+      };
+      ouo_da_append(&fn_type.as.t_fn.params, param_type);
+    }
+
+    _ouo_c_add_global_sym(c, &ast->as.decl_fn.name, &fn_type);
+  }
+}
+
 static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
   if (ast == NULL) return;
   if (parent != NULL) ast->returns = parent->returns;
@@ -2913,7 +2938,13 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
       OUO_DA_FOREACH(OuoAst *, stmt_p, &ast->children) {
         OuoAst *stmt = *stmt_p;
         if (!_ouo_ast_is_global(stmt)) continue;
+        _ouo_c_ast_visit_global(c, stmt);
+        c->panic_mode = false;
+      }
 
+      OUO_DA_FOREACH(OuoAst *, stmt_p, &ast->children) {
+        OuoAst *stmt = *stmt_p;
+        if (!_ouo_ast_is_global(stmt)) continue;
         _ouo_c_ast_visit(c, stmt, ast);
         c->panic_mode = false;
       }
@@ -2921,8 +2952,7 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
       OUO_DA_FOREACH(OuoAst *, stmt_p, &ast->children) {
         OuoAst *stmt = *stmt_p;
         if (_ouo_ast_is_global(stmt)) continue;
-
-        if ((stmt)->kind == OUO_AST_EXPR_STMT) (stmt)->as.expr_stmt.pop = true;
+        if ((stmt)->kind == OUO_AST_EXPR_STMT) stmt->as.expr_stmt.pop = true;
         _ouo_c_ast_visit(c, stmt, ast);
         c->panic_mode = false;
       }
@@ -3075,31 +3105,24 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
       _ouo_c_ast_visit(c, ast->as.decl_var.value, ast);
       break;
     case OUO_AST_DECL_FN: {
-      OUO_DA_FOREACH(OuoAstNameType, param, &ast->as.decl_fn.params) {
-        _ouo_c_ast_visit(c, param->type_annot, ast);
-      }
-      if (ast->as.decl_fn.return_type_annot != NULL) {
-        _ouo_c_ast_visit(c, ast->as.decl_fn.return_type_annot, ast);
-        ast->as.decl_fn.body->returns =
-            &ast->as.decl_fn.return_type_annot->as.lit_type;
-      }
-
-      _ouo_c_ast_analyze(c, ast);
-
 #ifndef OUO_NOEMIT
       OuoRcFn *rc = _ouo_rc_new_fn();
       rc->arity = ast->as.decl_fn.params.count;
       _ouo_c_add_global(c, ast, &_ouo_obj_new_fn(rc));
 #endif
 
-      OuoCompileResult fn_res = {.global_syms = c->res->global_syms,
+      OuoCompileResult fn_res = {
+          .global_syms = c->res->global_syms,
           .types = c->res->types,
           .errors = c->res->errors,
-#ifndef OUO_NOEMIT
-          .chunk = {.name = ast->as.decl_fn.name.str,
-              .globals = c->res->chunk.globals}
-#endif
       };
+
+#ifndef OUO_NOEMIT
+      fn_res.chunk = (OuoChunk){
+          .name = ast->as.decl_fn.name.str,
+          .globals = c->res->chunk.globals,
+      };
+#endif
 
       _OuoCompiler fn_c = {0};
       _ouo_c_init(&fn_c, &fn_res);
@@ -3127,7 +3150,6 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
 
         rc->chunk = fn_res.chunk;
       } else _ouo_chunk_free(&fn_res.chunk);
-
 #endif // OUO_NOEMIT
 
       _ouo_c_res_cleanup(&fn_res);
@@ -3136,10 +3158,9 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
   }
 
   _ouo_c_ast_analyze(c, ast);
-  if (c->res->failed || c->noemit) return;
 
 #ifndef OUO_NOEMIT
-  _ouo_c_ast_emit(c, ast);
+  if (!c->res->failed && !c->noemit) _ouo_c_ast_emit(c, ast);
 #endif
 
   if (new_scope) _ouo_c_scope_end(c, ast);
@@ -3483,9 +3504,7 @@ static inline bool _ouo_obj_deref(OuoObject *obj) {
     // Reference-counted
     case OUO_OBJ_STR: ouo_da_free(((OuoRcStr *)rc)->str); break;
     case OUO_OBJ_FN: {
-      OuoRcFn *rc_fn = (OuoRcFn *)rc;
-      _ouo_chunk_free(&rc_fn->chunk);
-      _ouo_chunk_cleanup(&rc_fn->chunk);
+      _ouo_chunk_free(&((OuoRcFn *)rc)->chunk);
       break;
     }
   }
