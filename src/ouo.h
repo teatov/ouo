@@ -2474,6 +2474,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
           : &ast->type;
       if (ast->returns != NULL && !_ouo_type_is(return_type, ast->returns))
         _ouo_c_err_fn_type(c, ast, ast->returns, return_type);
+      else if (ast->returns == NULL) ast->returns = return_type;
       break;
     }
     case OUO_AST_DECL_VAR: {
@@ -3158,6 +3159,7 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
   }
 
   _ouo_c_ast_analyze(c, ast);
+  if (parent != NULL && parent->returns == NULL) parent->returns = ast->returns;
 
 #ifndef OUO_NOEMIT
   if (!c->res->failed && !c->noemit) _ouo_c_ast_emit(c, ast);
