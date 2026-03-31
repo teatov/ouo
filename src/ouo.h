@@ -185,11 +185,16 @@ typedef enum {
   OUO_TYPE_FN,
 } OuoTypeKind;
 
-struct OuoType;
+struct OuoTypeRef;
+
+typedef struct {
+  OuoTypeKind kind;
+  struct OuoTypeRef *ref;
+} OuoType;
 
 typedef struct {
   OuoStringSlice name;
-  struct OuoType *type;
+  OuoType type;
 } OuoNameType;
 
 typedef struct {
@@ -198,16 +203,16 @@ typedef struct {
   size_t capacity;
 } OuoNameTypes;
 
-typedef struct OuoType {
+typedef struct OuoTypeRef {
   OuoTypeKind kind;
 
   union {
     struct {
       OuoNameTypes params;
-      struct OuoType *return_type;
+      OuoType return_type;
     } t_fn;
   } as;
-} OuoType;
+} OuoTypeRef;
 
 //
 // Error handling
@@ -452,6 +457,7 @@ typedef struct OuoAst {
       OuoAstNameTypes params;
       struct OuoAst *return_type_annot;
       struct OuoAst *body;
+      struct OuoSymbol *sym;
     } decl_fn;
   } as;
 } OuoAst;
@@ -584,10 +590,10 @@ typedef struct {
   OuoChunkSymbols global_syms;
 
   struct {
-    OuoType *items;
+    OuoTypeRef *items;
     size_t count;
     size_t capacity;
-  } types;
+  } type_refs;
 
   OuoErrors errors;
 } OuoCompileResult;
@@ -696,12 +702,14 @@ static inline bool _ouo_type_is(OuoType *a, OuoType *b) {
     case OUO_TYPE_STR: break;
     // Funtion
     case OUO_TYPE_FN:
-      if (!_ouo_type_is(a->as.t_fn.return_type, b->as.t_fn.return_type))
+      if (!_ouo_type_is(
+              &a->ref->as.t_fn.return_type, &b->ref->as.t_fn.return_type))
         return false;
-      if (a->as.t_fn.params.count != b->as.t_fn.params.count) return false;
-      for (size_t i = 0; i < a->as.t_fn.params.count; i++)
-        if (!_ouo_type_is(a->as.t_fn.params.items[i].type,
-                b->as.t_fn.params.items[i].type))
+      if (a->ref->as.t_fn.params.count != b->ref->as.t_fn.params.count)
+        return false;
+      for (size_t i = 0; i < a->ref->as.t_fn.params.count; i++)
+        if (!_ouo_type_is(&a->ref->as.t_fn.params.items[i].type,
+                &b->ref->as.t_fn.params.items[i].type))
           return false;
       break;
   }
@@ -736,21 +744,22 @@ static OuoString _ouo_type_str_rec(OuoType *type, size_t depth) {
 
   if (type->kind == OUO_TYPE_FN) {
     ouo_da_append_many(&str, "(", 1);
-    for (size_t i = 0; i < type->as.t_fn.params.count; i++) {
-      OuoNameType *param = &type->as.t_fn.params.items[i];
+    for (size_t i = 0; i < type->ref->as.t_fn.params.count; i++) {
+      OuoNameType *param = &type->ref->as.t_fn.params.items[i];
       ouo_da_append_many(&str, param->name.start, param->name.len);
       ouo_da_append_many(&str, ": ", 2);
 
-      OuoString param_str = _ouo_type_str_rec(param->type, depth);
+      OuoString param_str = _ouo_type_str_rec(&param->type, depth);
       ouo_da_append_many(&str, param_str.items, param_str.count);
       ouo_da_free(param_str);
 
-      if (i < type->as.t_fn.params.count - 1) ouo_da_append_many(&str, ", ", 2);
+      if (i < type->ref->as.t_fn.params.count - 1)
+        ouo_da_append_many(&str, ", ", 2);
     }
     ouo_da_append_many(&str, "): ", 3);
 
     OuoString return_type_str =
-        _ouo_type_str_rec(type->as.t_fn.return_type, depth);
+        _ouo_type_str_rec(&type->ref->as.t_fn.return_type, depth);
     ouo_da_append_many(&str, return_type_str.items, return_type_str.count);
     ouo_da_free(return_type_str);
   }
@@ -762,8 +771,8 @@ static OuoString _ouo_type_str(OuoType *type) {
   return _ouo_type_str_rec(type, 10);
 }
 
-static void _ouo_type_free(OuoType *type) {
-  if (type->kind == OUO_TYPE_FN) ouo_da_free(type->as.t_fn.params);
+static void _ouo_type_ref_free(OuoTypeRef *type_ref) {
+  if (type_ref->kind == OUO_TYPE_FN) ouo_da_free(type_ref->as.t_fn.params);
 }
 
 static inline uint8_t _ouo_utf8_cp_len(const char *p) {
@@ -1797,7 +1806,7 @@ static void _ouo_ast_free(OuoAst *ast) {
     case OUO_AST_LIT_FLOAT:
     case OUO_AST_LIT_BOOL: break;
     case OUO_AST_LIT_STR: ouo_da_free(ast->as.lit_str); break;
-    case OUO_AST_LIT_TYPE: _ouo_type_free(&ast->as.lit_type); break;
+    case OUO_AST_LIT_TYPE: break;
     // Expressions
     case OUO_AST_ASSIGN:
       _ouo_ast_free(ast->as.assign.target);
@@ -2059,9 +2068,11 @@ static inline bool _ouo_c_find_sym(
   return false;
 }
 
-static inline OuoType *_ouo_c_add_type(_OuoCompiler *c, OuoType *type) {
-  ouo_da_append(&c->res->types, *type);
-  return &c->res->types.items[c->res->types.count - 1];
+static inline OuoTypeRef *_ouo_c_add_type_ref(
+    _OuoCompiler *c, OuoTypeKind kind, OuoTypeRef *ref) {
+  ref->kind = kind;
+  ouo_da_append(&c->res->type_refs, *ref);
+  return &c->res->type_refs.items[c->res->type_refs.count - 1];
 }
 
 static inline OuoSymbol *_ouo_c_chunk_add_sym(
@@ -2203,7 +2214,7 @@ static void _ouo_c_err_call_arg_num(
 
   _ouo_c_err(c, ast->tok, OUO_ERR_TYPE,
       "'%.*s' expects %zu arguments, got %zu.", OUO_STR_FMT(type_str),
-      fn_type->as.t_fn.params.count, got);
+      fn_type->ref->as.t_fn.params.count, got);
 
   ouo_da_free(type_str);
 }
@@ -2439,20 +2450,20 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       c->panic_mode = false;
 
       if (sym->type.kind == OUO_TYPE_FN)
-        ast->type = *sym->type.as.t_fn.return_type;
+        ast->type = sym->type.ref->as.t_fn.return_type;
       else {
         _ouo_c_err_call_type(c, ast);
         break;
       }
 
-      if (sym->type.as.t_fn.params.count != ast->children.count) {
+      if (sym->type.ref->as.t_fn.params.count != ast->children.count) {
         _ouo_c_err_call_arg_num(c, ast, &sym->type, ast->children.count);
         break;
       }
 
       for (size_t i = 0; i < ast->children.count; i++) {
         OuoAst *arg = ast->children.items[i];
-        OuoType *param = sym->type.as.t_fn.params.items[i].type;
+        OuoType *param = &sym->type.ref->as.t_fn.params.items[i].type;
         if (arg->type.kind != OUO_TYPE_UNKNOWN &&
             !_ouo_type_is(&arg->type, param)) {
           _ouo_c_err_call_arg_type(c, arg, param, &arg->type, i);
@@ -2526,7 +2537,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       else if (return_type_annot == NULL) {
         OuoSymbol *sym = NULL;
         _ouo_chunk_find_sym(&c->res->global_syms, &ast->as.decl_fn.name, &sym);
-        if (sym != NULL) *sym->type.as.t_fn.return_type = *body_type;
+        if (sym != NULL) sym->type.ref->as.t_fn.return_type = *body_type;
       }
 
       c->panic_mode = panic_prev;
@@ -2910,24 +2921,33 @@ static void _ouo_c_ast_visit_global(_OuoCompiler *c, OuoAst *ast) {
     }
 
     OuoAst *type_annot = ast->as.decl_fn.return_type_annot;
-    OuoType fn_type = (OuoType){
+    OuoType fn_type = {
         .kind = OUO_TYPE_FN,
-        .as.t_fn = {.return_type = _ouo_c_add_type(c,
-                        type_annot != NULL
-                            ? &type_annot->as.lit_type
-                            : &(OuoType){.kind = OUO_TYPE_UNKNOWN})},
+        .ref = _ouo_c_add_type_ref(c, OUO_TYPE_FN,
+            &(OuoTypeRef){
+                .as.t_fn = {.return_type = type_annot != NULL
+                        ? type_annot->as.lit_type
+                        : (OuoType){.kind = OUO_TYPE_UNKNOWN},
+                    .params = {.items = NULL, .count = 0}},
+            }),
     };
 
     OUO_DA_FOREACH(OuoAstNameType, param, &ast->as.decl_fn.params) {
       OuoNameType param_type = {
           .name = param->name.str,
-          .type = _ouo_c_add_type(c, &param->type_annot->as.lit_type),
+          .type = param->type_annot->as.lit_type,
       };
-      ouo_da_append(&fn_type.as.t_fn.params, param_type);
+      ouo_da_append(&fn_type.ref->as.t_fn.params, param_type);
     }
 
-    _ouo_c_add_global_sym(
-        c, &ast->as.decl_fn.name, _ouo_c_add_type(c, &fn_type));
+    ast->as.decl_fn.sym =
+        _ouo_c_add_global_sym(c, &ast->as.decl_fn.name, &fn_type);
+
+#ifndef OUO_NOEMIT
+    OuoRcFn *rc = _ouo_rc_new_fn();
+    rc->arity = ast->as.decl_fn.params.count;
+    _ouo_c_add_global(c, ast, &_ouo_obj_new_fn(rc));
+#endif
   }
 }
 
@@ -3116,15 +3136,9 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
       _ouo_c_ast_visit(c, ast->as.decl_var.value, ast);
       break;
     case OUO_AST_DECL_FN: {
-#ifndef OUO_NOEMIT
-      OuoRcFn *rc = _ouo_rc_new_fn();
-      rc->arity = ast->as.decl_fn.params.count;
-      _ouo_c_add_global(c, ast, &_ouo_obj_new_fn(rc));
-#endif
-
       OuoCompileResult fn_res = {
           .global_syms = c->res->global_syms,
-          .types = c->res->types,
+          .type_refs = c->res->type_refs,
           .errors = c->res->errors,
       };
 
@@ -3148,7 +3162,7 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
 
       c->res->failed = fn_res.failed;
       c->res->global_syms = fn_res.global_syms;
-      c->res->types = fn_res.types;
+      c->res->type_refs = fn_res.type_refs;
       c->res->errors = fn_res.errors;
 
 #ifndef OUO_NOEMIT
@@ -3159,6 +3173,9 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
                 ? OUO_OP_RETURN_VOID
                 : OUO_OP_RETURN);
 
+        OuoRcFn *rc =
+            (OuoRcFn *)c->res->chunk.globals.items[ast->as.decl_fn.sym->idx]
+                .as.ref;
         rc->chunk = fn_res.chunk;
       } else _ouo_chunk_free(&fn_res.chunk);
 #endif // OUO_NOEMIT
@@ -3198,14 +3215,7 @@ static inline void _ouo_c_compile(_OuoCompiler *c, OuoAst *ast) {
         OUO_TOK_FMT(sym->name), sym->scope_depth);
     ouo_da_free(type_str);
   }
-  ouo_printdbg("\ntypes: ");
-  for (size_t i = 0; i < c->res->types.count; i++) {
-    OuoType *type = &c->res->types.items[i];
-    OuoString type_str = _ouo_type_str(type);
-    ouo_printdbg("[%zu '%.*s'] ", i, OUO_STR_FMT(type_str));
-    ouo_da_free(type_str);
-  }
-  ouo_printdbg("\n");
+  ouo_printdbg("\ntype refs: %zu\n", c->res->type_refs.count);
   _ouo_ast_dump(ast);
   ouo_printdbg("\n");
 
@@ -3238,8 +3248,10 @@ void ouo_c_res_cleanup(OuoCompileResult *res) {
   _ouo_c_res_cleanup(res);
   ouo_da_free(res->global_syms);
 
-  OUO_DA_FOREACH(OuoType, type, &res->types) { _ouo_type_free(type); }
-  ouo_da_free(res->types);
+  OUO_DA_FOREACH(OuoTypeRef, type_ref, &res->type_refs) {
+    _ouo_type_ref_free(type_ref);
+  }
+  ouo_da_free(res->type_refs);
 
 #ifndef OUO_NOEMIT
   _ouo_chunk_cleanup(&res->chunk);
