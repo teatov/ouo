@@ -446,7 +446,7 @@ static inline void js_string(JsonSerializer *js, OuoStringSlice *value) {
 }
 
 static inline void js_string_raw(JsonSerializer *js, const char *str) {
-  OuoStringSlice value = (OuoStringSlice){.start = str, .len = strlen(str)};
+  OuoStringSlice value = {.start = str, .len = strlen(str)};
   js_string(js, &value);
 }
 

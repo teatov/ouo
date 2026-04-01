@@ -7,6 +7,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -1665,7 +1666,7 @@ static void _ouo_p_name_types(
     OuoAst *type = _ouo_p_lit_type(p);
     if (type == NULL) return;
 
-    OuoAstNameType nt = (OuoAstNameType){.name = ident, .type_annot = type};
+    OuoAstNameType nt = {.name = ident, .type_annot = type};
     ouo_da_append(nts, nt);
 
     if (p->peek.kind == OUO_TOK_COMMA) _ouo_p_advance(p);
@@ -2148,7 +2149,7 @@ static inline OuoSymbol *_ouo_c_chunk_add_sym(_OuoCompiler *c,
 
   if (c->res->failed && c->res->keep_module_scope) return NULL;
 
-  OuoSymbol sym = (OuoSymbol){
+  OuoSymbol sym = {
       .kind = kind,
       .idx = syms->count,
       .name = *name,
@@ -3095,8 +3096,7 @@ static inline void _ouo_c_scope_end(_OuoCompiler *c, OuoAst *ast) {
     _ouo_c_write_u8(c, ast, (uint8_t)pop_count);
   }
 #else
-  (void)ast;
-  (void)pop_count;
+  (void)ast, (void)pop_count;
 #endif
 }
 
@@ -3395,6 +3395,10 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
   if (new_scope) _ouo_c_scope_end(c, ast);
 }
 
+//
+// Builtins
+//
+
 #ifndef OUO_NOEMIT
 #define _ouo_obj_new_bifn(fn) \
   ((OuoObject){.kind = OUO_OBJ_BUILTIN_FN, .as.bifn = fn})
@@ -3412,18 +3416,58 @@ static OuoTypeRef _ouo_bi_nice_type = {
 #ifndef OUO_NOEMIT
 static bool _ouo_bi_nice(
     OuoObject *arg3, OuoObject *arg2, OuoObject *arg1, OuoObject *ret) {
-  (void)arg1;
-  (void)arg2;
-  (void)arg3;
-  ouo_print("NICE %ld!!!\n", arg1->as.v_int);
+  (void)arg1, (void)arg2, (void)arg3;
+  ouo_print("NICE %" OUO_PRId "!!!\n", arg1->as.v_int);
   *ret = _ouo_obj_new_int(arg1->as.v_int * 2);
   return true;
 }
 #endif // OUO_NOEMIT
 
+// Math
+
+static OuoNameType _ouo_bi_fcheck_args[] = {
+    {.name = {.start = "f", .len = 1}, .type = {.kind = OUO_TYPE_FLOAT}}};
+static OuoTypeRef _ouo_bi_fcheck_type = {
+    .as.t_fn = {.return_type = {.kind = OUO_TYPE_BOOL},
+        .params = {.items = _ouo_bi_fcheck_args, .count = 1}}};
+
+#ifndef OUO_NOEMIT
+static bool _ouo_bi_isinf(
+    OuoObject *arg3, OuoObject *arg2, OuoObject *arg1, OuoObject *ret) {
+  (void)arg1, (void)arg2, (void)arg3;
+  *ret = _ouo_obj_new_bool(isinf(arg1->as.v_float));
+  return true;
+}
+
+static bool _ouo_bi_isnan(
+    OuoObject *arg3, OuoObject *arg2, OuoObject *arg1, OuoObject *ret) {
+  (void)arg1, (void)arg2, (void)arg3;
+  *ret = _ouo_obj_new_bool(isnan(arg1->as.v_float));
+  return true;
+}
+
+static bool _ouo_bi_signbit(
+    OuoObject *arg3, OuoObject *arg2, OuoObject *arg1, OuoObject *ret) {
+  (void)arg1, (void)arg2, (void)arg3;
+  *ret = _ouo_obj_new_bool(signbit(arg1->as.v_float));
+  return true;
+}
+#endif // OUO_NOEMIT
+
 static _OuoBuiltin _ouo_c_builtins[] = {
-    {"nice", (OuoType){.kind = OUO_TYPE_FN, .ref = &_ouo_bi_nice_type},
+    {"nice", {.kind = OUO_TYPE_FN, .ref = &_ouo_bi_nice_type},
         _OUO_BI_OBJ(bifn, _ouo_bi_nice)},
+    // Math
+    {"INT_MIN", {.kind = OUO_TYPE_INT}, _OUO_BI_OBJ(int, OUO_INT_MIN)},
+    {"INT_MAX", {.kind = OUO_TYPE_INT}, _OUO_BI_OBJ(int, OUO_INT_MAX)},
+    {"INF", {.kind = OUO_TYPE_FLOAT}, _OUO_BI_OBJ(float, INFINITY)},
+    {"NAN", {.kind = OUO_TYPE_FLOAT}, _OUO_BI_OBJ(float, NAN)},
+    {"isinf", {.kind = OUO_TYPE_FN, .ref = &_ouo_bi_fcheck_type},
+        _OUO_BI_OBJ(bifn, _ouo_bi_isinf)},
+    {"isnan", {.kind = OUO_TYPE_FN, .ref = &_ouo_bi_fcheck_type},
+        _OUO_BI_OBJ(bifn, _ouo_bi_isnan)},
+    {"signbit", {.kind = OUO_TYPE_FN, .ref = &_ouo_bi_fcheck_type},
+        _OUO_BI_OBJ(bifn, _ouo_bi_signbit)},
 };
 
 static void _ouo_c_register_builtins(_OuoCompiler *c) {
