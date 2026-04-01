@@ -545,10 +545,10 @@ typedef enum {
   // Logic
   OUO_OP_NOT, // [... a] -> [... !a]
   // Control flow
-  OUO_OP_JUMP,          // u16: offset
+  OUO_OP_JUMP,          // u16 offset
   OUO_OP_JUMP_IF_FALSE, // u16 offset: [... v] -> [...]
-  OUO_OP_LOOP,          // u16: offset
-  OUO_OP_CALL,        // u8: argc: [... argN ... arg1 callee] -> [argN ... arg1]
+  OUO_OP_LOOP,          // u16 offset
+  OUO_OP_CALL,        // u8 argc: [... argN ... arg1 callee] -> [argN ... arg1]
   OUO_OP_RETURN,      // u8 pop_count: [... vN ... v1] -> [...]
   OUO_OP_RETURN_VOID, // u8 pop_count: [... vN ... v1] -> [...]
   // Input/output
@@ -1182,8 +1182,7 @@ typedef enum {
   _OUO_PREC_ASSIGN,
   _OUO_PREC_OR,
   _OUO_PREC_AND,
-  _OUO_PREC_EQUALITY,
-  _OUO_PREC_RELATION,
+  _OUO_PREC_COMPARISON,
   _OUO_PREC_SUM,
   _OUO_PREC_PRODUCT,
   _OUO_PREC_UNARY,
@@ -1795,12 +1794,12 @@ static const _OuoParseRule _ouo_p_rules[] = {
     [OUO_TOK_MINUS] = {_ouo_p_unary, _ouo_p_binary, _OUO_PREC_SUM},
     [OUO_TOK_ASTERISK] = {NULL, _ouo_p_binary, _OUO_PREC_PRODUCT},
     [OUO_TOK_SLASH] = {NULL, _ouo_p_binary, _OUO_PREC_PRODUCT},
-    [OUO_TOK_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_EQUALITY},
-    [OUO_TOK_NEQ] = {NULL, _ouo_p_binary, _OUO_PREC_EQUALITY},
-    [OUO_TOK_LT] = {NULL, _ouo_p_binary, _OUO_PREC_RELATION},
-    [OUO_TOK_LT_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_RELATION},
-    [OUO_TOK_GT] = {NULL, _ouo_p_binary, _OUO_PREC_RELATION},
-    [OUO_TOK_GT_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_RELATION},
+    [OUO_TOK_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
+    [OUO_TOK_NEQ] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
+    [OUO_TOK_LT] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
+    [OUO_TOK_LT_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
+    [OUO_TOK_GT] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
+    [OUO_TOK_GT_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
     [OUO_TOK_BANG] = {_ouo_p_unary, NULL, _OUO_PREC_LOWEST},
     // Punctuation
     [OUO_TOK_PAREN_OPN] = {_ouo_p_grouping, _ouo_p_call, _OUO_PREC_ACCESS},
