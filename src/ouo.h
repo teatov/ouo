@@ -2041,7 +2041,7 @@ static void _ouo_c_dump(_OuoCompiler *c, OuoAst *ast);
 
 #ifndef OUO_NOEMIT
 static inline void _ouo_obj_ref(OuoObject *obj);
-static inline bool _ouo_obj_deref(OuoObject *obj);
+static inline void _ouo_obj_deref(OuoObject *obj);
 
 static void _ouo_chunk_free(OuoChunk *chunk);
 static void _ouo_chunk_cleanup(OuoChunk *chunk);
@@ -2920,6 +2920,31 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
   }
 }
 
+static void _ouo_c_ast_transform(OuoAst *ast) {
+  switch (ast->kind) {
+    case OUO_AST_UNARY:
+      switch (ast->as.unary.op) {
+        // Arithmetic
+        case OUO_TOK_MINUS:
+          if (ast->as.unary.right->kind == OUO_AST_LIT_INT) {
+            _ouo_ast_free(ast->as.unary.right);
+            ast->kind = OUO_AST_LIT_INT;
+            ast->as.lit_int = -ast->as.unary.right->as.lit_int;
+          } else if (ast->as.unary.right->kind == OUO_AST_LIT_FLOAT) {
+            _ouo_ast_free(ast->as.unary.right);
+            ast->kind = OUO_AST_LIT_FLOAT;
+            ast->as.lit_float = -ast->as.unary.right->as.lit_float;
+          }
+          break;
+
+        default: break;
+      }
+      break;
+
+    default: break;
+  }
+}
+
 #endif // OUO_NOEMIT
 
 static inline void _ouo_c_scope_begin(_OuoCompiler *c) { c->scope_depth++; }
@@ -3013,6 +3038,10 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
   if (ast == NULL) return;
   if (parent != NULL) ast->returns = parent->returns;
   bool new_scope = false;
+
+#ifndef OUO_NOEMIT
+  _ouo_c_ast_transform(ast);
+#endif
 
   switch (ast->kind) {
     case OUO_AST_MODULE:
@@ -3584,8 +3613,8 @@ static inline void _ouo_obj_ref(OuoObject *obj) {
   obj->as.ref->count++;
 }
 
-static inline bool _ouo_obj_deref(OuoObject *obj) {
-  if (!_ouo_obj_is_rc(obj)) return true;
+static inline void _ouo_obj_deref(OuoObject *obj) {
+  if (!_ouo_obj_is_rc(obj)) return;
   OuoRc *rc = obj->as.ref;
 
 #ifdef OUO_DEBUG
@@ -3600,7 +3629,7 @@ static inline bool _ouo_obj_deref(OuoObject *obj) {
 #ifdef OUO_DEBUG
     ouo_printdbg("\n");
 #endif
-    return true;
+    return;
   }
 
   switch (obj->kind) {
@@ -3621,7 +3650,7 @@ static inline bool _ouo_obj_deref(OuoObject *obj) {
 #ifdef OUO_DEBUG
   ouo_printdbg("    FREED!\n");
 #endif
-  return true;
+  return;
 }
 
 static inline void _ouo_vm_stack_push_noref(
@@ -3651,7 +3680,7 @@ static inline OuoObject *_ouo_vm_stack_pop_noderef(
 #ifdef OUO_DEBUG
   if (vm->res->stack.top == vm->res->stack.items) {
     _ouo_vm_err(vm, fr, OUO_ERR_RUNTIME, "Trying to pop empty stack.");
-    return &vm->res->stack.items[OUO_VM_STACK_SIZE];
+    return NULL;
   }
 #else
   (void)fr;
@@ -3664,7 +3693,7 @@ static inline OuoObject *_ouo_vm_stack_pop_noderef(
 
 static inline OuoObject *_ouo_vm_stack_pop(_OuoVm *vm, _OuoCallFrame *fr) {
   OuoObject *obj = _ouo_vm_stack_pop_noderef(vm, fr);
-  if (!_ouo_obj_deref(obj)) return &vm->res->stack.items[OUO_VM_STACK_SIZE];
+  _ouo_obj_deref(obj);
   return obj;
 }
 
