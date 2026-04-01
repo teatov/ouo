@@ -386,7 +386,8 @@ typedef struct OuoAst {
   OuoAstKind kind;
   OuoToken tok;
   OuoType type;
-  OuoType *returns;
+  OuoType *returns_exp;
+  OuoType *returns_got;
 
   // Common
   struct {
@@ -1230,7 +1231,8 @@ static inline OuoAst *_ouo_ast_new(OuoToken *tok, OuoAstKind kind) {
   ast->kind = kind;
   ast->tok = *tok;
   ast->type.kind = OUO_TYPE_UNKNOWN;
-  ast->returns = NULL;
+  ast->returns_exp = NULL;
+  ast->returns_got = NULL;
 
   ast->children.items = NULL;
   ast->children.count = 0;
@@ -1902,8 +1904,10 @@ static void _ouo_ast_dump(OuoAst *ast) {
   }
 
   ouo_printdbg("(%s ", _ouo_ast_kind_str(ast->kind));
-  if (ast->returns != NULL)
-    ouo_printdbg("ret '%s' ", _ouo_type_kind_str(ast->returns->kind));
+  if (ast->returns_exp != NULL)
+    ouo_printdbg("ret_exp '%s' ", _ouo_type_kind_str(ast->returns_exp->kind));
+  if (ast->returns_got != NULL)
+    ouo_printdbg("ret_got '%s' ", _ouo_type_kind_str(ast->returns_got->kind));
 
   switch (ast->kind) {
     case OUO_AST_MODULE:
@@ -2051,7 +2055,8 @@ static void _ouo_chunk_dump(OuoChunk *chunk);
 #endif // OUO_DEBUG
 #endif // OUO_NOEMIT
 
-static inline void _ouo_c_init(_OuoCompiler *c, OuoCompileResult *res, size_t scope_depth) {
+static inline void _ouo_c_init(
+    _OuoCompiler *c, OuoCompileResult *res, size_t scope_depth) {
   res->failed = false;
   c->res = res;
   c->scope_depth = scope_depth;
@@ -2500,9 +2505,11 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       OuoType *return_type = ast->as.expr_stmt.expr != NULL
           ? &ast->as.expr_stmt.expr->type
           : &ast->type;
-      if (ast->returns != NULL && !_ouo_type_is(return_type, ast->returns))
-        _ouo_c_err_fn_type(c, ast, ast->returns, return_type);
-      else if (ast->returns == NULL) ast->returns = return_type;
+
+      ast->returns_got = return_type;
+      if (ast->returns_exp != NULL &&
+          !_ouo_type_is(return_type, ast->returns_exp))
+        _ouo_c_err_fn_type(c, ast, ast->returns_exp, return_type);
       break;
     }
     case OUO_AST_DECL_VAR: {
@@ -2534,12 +2541,13 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
       OuoAst *body = ast->as.decl_fn.body;
       OuoAst *return_type_annot = ast->as.decl_fn.return_type_annot;
 
-      OuoType *body_type = body->returns != NULL ? body->returns : &body->type;
+      OuoType *body_type =
+          body->returns_got != NULL ? body->returns_got : &body->type;
       OuoType *return_type = return_type_annot != NULL
           ? &return_type_annot->as.lit_type
           : body_type;
 
-      if (body_type->kind != OUO_TYPE_UNKNOWN &&
+      if (body_type->kind != OUO_TYPE_UNKNOWN && body->returns_got == NULL &&
           !_ouo_type_is(body_type, return_type))
         _ouo_c_err_fn_type(c, ast, return_type, body_type);
       else if (return_type_annot == NULL) {
@@ -3005,7 +3013,7 @@ static void _ouo_c_ast_visit_global(_OuoCompiler *c, OuoAst *ast) {
     }
     if (ast->as.decl_fn.return_type_annot != NULL) {
       _ouo_c_ast_visit(c, ast->as.decl_fn.return_type_annot, ast);
-      ast->as.decl_fn.body->returns =
+      ast->as.decl_fn.body->returns_exp =
           &ast->as.decl_fn.return_type_annot->as.lit_type;
     }
 
@@ -3042,7 +3050,7 @@ static void _ouo_c_ast_visit_global(_OuoCompiler *c, OuoAst *ast) {
 
 static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
   if (ast == NULL) return;
-  if (parent != NULL) ast->returns = parent->returns;
+  if (parent != NULL) ast->returns_exp = parent->returns_exp;
   bool new_scope = false;
 
 #ifndef OUO_NOEMIT
@@ -3273,7 +3281,14 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
   }
 
   _ouo_c_ast_analyze(c, ast);
-  if (parent != NULL && parent->returns == NULL) parent->returns = ast->returns;
+
+  if (parent != NULL && parent->returns_got != NULL &&
+      ast->returns_got != NULL && ast->returns_exp == NULL &&
+      !_ouo_type_is(ast->returns_got, parent->returns_got)) {
+    _ouo_c_err_fn_type(c, ast, parent->returns_got, ast->returns_got);
+  }
+
+  if (parent != NULL) parent->returns_got = ast->returns_got;
 
 #ifndef OUO_NOEMIT
   if (!c->res->failed && !c->noemit) _ouo_c_ast_emit(c, ast);
