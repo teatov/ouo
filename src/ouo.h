@@ -2051,9 +2051,10 @@ static void _ouo_chunk_dump(OuoChunk *chunk);
 #endif // OUO_DEBUG
 #endif // OUO_NOEMIT
 
-static inline void _ouo_c_init(_OuoCompiler *c, OuoCompileResult *res) {
+static inline void _ouo_c_init(_OuoCompiler *c, OuoCompileResult *res, size_t scope_depth) {
   res->failed = false;
   c->res = res;
+  c->scope_depth = scope_depth;
 }
 
 static inline bool _ouo_chunk_find_sym(
@@ -2290,8 +2291,6 @@ static void _ouo_c_err_fn_type(
 }
 
 static inline OuoSymbol *_ouo_ast_get_sym(_OuoCompiler *c, OuoAst *ast) {
-  if (ast->type.kind == OUO_TYPE_UNKNOWN) return NULL;
-
   OuoSymbol *sym = NULL;
   switch (ast->kind) {
     case OUO_AST_IDENT: sym = ast->as.ident.sym; break;
@@ -2312,8 +2311,6 @@ static inline bool _ouo_ast_unary_is(OuoAst *ast, OuoTypeKind type_kind) {
 }
 
 static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
-  if (ast->type.kind != OUO_TYPE_UNKNOWN) return;
-
   switch (ast->kind) {
     case OUO_AST_MODULE: ast->type.kind = OUO_TYPE_VOID; break;
     case OUO_AST_IDENT: {
@@ -2947,6 +2944,16 @@ static void _ouo_c_ast_transform(OuoAst *ast) {
 
 #endif // OUO_NOEMIT
 
+static inline void _ouo_c_res_transfer(
+    OuoCompileResult *from, OuoCompileResult *to) {
+  to->failed = from->failed || to->failed;
+  to->type_refs = from->type_refs;
+  to->errors = from->errors;
+#ifndef OUO_NOEMIT
+  to->chunk.globals = from->chunk.globals;
+#endif
+}
+
 static inline void _ouo_c_scope_begin(_OuoCompiler *c) { c->scope_depth++; }
 
 static inline bool _ouo_c_chunk_scope_has_syms(
@@ -2992,7 +2999,6 @@ static inline bool _ouo_ast_is_global(OuoAst *ast) {
 }
 
 static void _ouo_c_ast_visit_global(_OuoCompiler *c, OuoAst *ast) {
-  c->panic_mode = false;
   if (ast->kind == OUO_AST_DECL_FN) {
     OUO_DA_FOREACH(OuoAstNameType, param, &ast->as.decl_fn.params) {
       _ouo_c_ast_visit(c, param->type_annot, ast);
@@ -3056,23 +3062,23 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
       OUO_DA_FOREACH(OuoAst *, stmt_p, &ast->children) {
         OuoAst *stmt = *stmt_p;
         if (!_ouo_ast_is_global(stmt)) continue;
-        _ouo_c_ast_visit_global(c, stmt);
         c->panic_mode = false;
+        _ouo_c_ast_visit_global(c, stmt);
       }
 
       OUO_DA_FOREACH(OuoAst *, stmt_p, &ast->children) {
         OuoAst *stmt = *stmt_p;
         if (!_ouo_ast_is_global(stmt)) continue;
-        _ouo_c_ast_visit(c, stmt, ast);
         c->panic_mode = false;
+        _ouo_c_ast_visit(c, stmt, ast);
       }
 
       OUO_DA_FOREACH(OuoAst *, stmt_p, &ast->children) {
         OuoAst *stmt = *stmt_p;
         if (_ouo_ast_is_global(stmt)) continue;
-        if ((stmt)->kind == OUO_AST_EXPR_STMT) stmt->as.expr_stmt.pop = true;
-        _ouo_c_ast_visit(c, stmt, ast);
         c->panic_mode = false;
+        if (stmt->kind == OUO_AST_EXPR_STMT) stmt->as.expr_stmt.pop = true;
+        _ouo_c_ast_visit(c, stmt, ast);
       }
 
       c->panic_mode = panic_prev;
@@ -3223,21 +3229,18 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
       _ouo_c_ast_visit(c, ast->as.decl_var.value, ast);
       break;
     case OUO_AST_DECL_FN: {
-      OuoCompileResult fn_res = {
-          .global_syms = c->res->global_syms,
-          .type_refs = c->res->type_refs,
-          .errors = c->res->errors,
-      };
+      OuoCompileResult fn_res = {0};
+      _ouo_c_res_transfer(c->res, &fn_res);
+      OUO_DA_FOREACH(OuoSymbol, sym, &c->res->global_syms) {
+        ouo_da_append(&fn_res.global_syms, *sym);
+      }
 
 #ifndef OUO_NOEMIT
-      fn_res.chunk = (OuoChunk){
-          .name = ast->as.decl_fn.name.str,
-          .globals = c->res->chunk.globals,
-      };
+      fn_res.chunk.name = ast->as.decl_fn.name.str;
 #endif
 
       _OuoCompiler fn_c = {0};
-      _ouo_c_init(&fn_c, &fn_res);
+      _ouo_c_init(&fn_c, &fn_res, c->scope_depth);
 
       _ouo_c_scope_begin(&fn_c);
       OUO_DA_FOREACH(OuoAstNameType, param, &ast->as.decl_fn.params) {
@@ -3247,14 +3250,9 @@ static void _ouo_c_ast_visit(_OuoCompiler *c, OuoAst *ast, OuoAst *parent) {
 
       OuoAst *fn_body = ast->as.decl_fn.body;
       _ouo_c_ast_visit(&fn_c, fn_body, NULL);
-
-      c->res->failed = fn_res.failed;
-      c->res->global_syms = fn_res.global_syms;
-      c->res->type_refs = fn_res.type_refs;
-      c->res->errors = fn_res.errors;
+      _ouo_c_res_transfer(&fn_res, c->res);
 
 #ifndef OUO_NOEMIT
-      c->res->chunk.globals = fn_res.chunk.globals;
       if (!fn_res.failed) {
         _ouo_c_emit_return(&fn_c, fn_body, fn_body->type.kind == OUO_TYPE_VOID);
 
@@ -3315,7 +3313,7 @@ static void _ouo_c_dump(_OuoCompiler *c, OuoAst *ast) {
 
 void ouo_compile(OuoAst *ast, OuoCompileResult *res) {
   _OuoCompiler c = {0};
-  _ouo_c_init(&c, res);
+  _ouo_c_init(&c, res, 0);
 
   _ouo_c_ast_visit(&c, ast, NULL);
 
@@ -3333,11 +3331,11 @@ void ouo_c_res_free(OuoCompileResult *res) {
 
 static void _ouo_c_res_cleanup(OuoCompileResult *res) {
   ouo_da_free(res->local_syms);
+  ouo_da_free(res->global_syms);
 }
 
 void ouo_c_res_cleanup(OuoCompileResult *res) {
   _ouo_c_res_cleanup(res);
-  ouo_da_free(res->global_syms);
 
   OUO_DA_FOREACH(OuoTypeRef, type_ref, &res->type_refs) {
     _ouo_type_ref_free(type_ref);
