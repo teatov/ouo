@@ -3561,6 +3561,7 @@ static void _ouo_chunk_dump(OuoChunk *chunk) {
 typedef struct {
   OuoChunk *chunk;
   uint8_t *ip;
+  uint8_t *end_ip;
   OuoObject *stack_top;
 } _OuoCallFrame;
 
@@ -3587,6 +3588,7 @@ static inline void _ouo_vm_frame_init(
     _OuoVm *vm, _OuoCallFrame *fr, OuoChunk *chunk, size_t stack_offset) {
   fr->chunk = chunk;
   fr->ip = chunk->bytecode.items;
+  fr->end_ip = fr->chunk->bytecode.items + fr->chunk->bytecode.count;
   fr->stack_top = vm->res->stack.top - stack_offset;
 }
 
@@ -3741,8 +3743,7 @@ static void _ouo_vm_run(_OuoVm *vm) {
     ouo_printdbg("%.*s:\n", OUO_STRSL_FMT(fr->chunk->name));
 #endif
 
-  for (; fr->ip < fr->chunk->bytecode.items + fr->chunk->bytecode.count;
-      ++(fr->ip)) {
+  for (; fr->ip < fr->end_ip; (fr->ip)++) {
     if (vm->res->failed) return;
 
 #ifdef OUO_DEBUG
