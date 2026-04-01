@@ -493,11 +493,16 @@ typedef struct OuoSymbol {
 typedef enum {
   // Objects
   OUO_OP_POP,        // [... v] -> [...]
-  OUO_OP_POPN,       // u8 pop_count: [... vN ... v1] -> [...]
-  OUO_OP_GET,        // u8 slot_idx: [... v ...] -> [... v ... v]
+  OUO_OP_POP_N,      // u8 pop_count: [... vN ... v1] -> [...]
+  OUO_OP_GET,        // u8 slot_idx: [... vI ...] -> [... vI ... vI]
   OUO_OP_SET,        // u8 slot_idx: [... vA ... vB] -> [... vB ...]
-  OUO_OP_GET_GLOBAL, // u8 global_idx: [...] -> [... v]
-  OUO_OP_LIT,        // u8 lit_idx: [...] -> [... v]
+  OUO_OP_GET_GLOBAL, // u8 global_idx: [...] -> [... vI]
+  OUO_OP_LIT,        // u8 lit_idx: [...] -> [... vI]
+  OUO_OP_PUSH_0,     // [...] -> [... 0]
+  OUO_OP_PUSH_1,     // [...] -> [... 1]
+  OUO_OP_PUSH_INT8,  // u8 int: [...] -> [... int]
+  OUO_OP_PUSH_TRUE,  // [...] -> [... true]
+  OUO_OP_PUSH_FALSE, // [...] -> [... false]
   // Arithmetic
   OUO_OP_ADD_INT, // [... a b] -> [... a+b]
   OUO_OP_ADD_FLOAT,
@@ -2603,6 +2608,24 @@ static inline void _ouo_c_emit_lit(
     return;
   }
 
+  if (obj->kind == OUO_OBJ_INT) {
+    if (obj->as.v_int == 0) {
+      _ouo_c_write_u8(c, ast, OUO_OP_PUSH_0);
+      return;
+    } else if (obj->as.v_int == 1) {
+      _ouo_c_write_u8(c, ast, OUO_OP_PUSH_1);
+      return;
+    } else if (obj->as.v_int >= INT8_MIN && obj->as.v_int <= INT8_MAX) {
+      _ouo_c_write_u8(c, ast, OUO_OP_PUSH_INT8);
+      _ouo_c_write_u8(c, ast, (uint8_t)obj->as.v_int);
+      return;
+    }
+  } else if (obj->kind == OUO_OBJ_BOOL) {
+    _ouo_c_write_u8(
+        c, ast, obj->as.v_bool ? OUO_OP_PUSH_TRUE : OUO_OP_PUSH_FALSE);
+    return;
+  }
+
   size_t lit_idx = _ouo_chunk_objs_add(&c->res->chunk.literals, obj);
   _ouo_c_write_u8(c, ast, OUO_OP_LIT);
   _ouo_c_write_u8(c, ast, (uint8_t)lit_idx);
@@ -2662,7 +2685,7 @@ static inline void _ouo_c_emit_return(
 
   if (pop_count > UINT8_MAX) {
     _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
-        "Maximum POPN count exceeded (max %d).", UINT8_MAX);
+        "Maximum POP_N count exceeded (max %d).", UINT8_MAX);
     return;
   }
 
@@ -2925,12 +2948,12 @@ static inline void _ouo_c_scope_end(_OuoCompiler *c, OuoAst *ast) {
 #ifndef OUO_NOEMIT
   if (pop_count > UINT8_MAX) {
     _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
-        "Maximum POPN count exceeded (max %d).", UINT8_MAX);
+        "Maximum POP_N count exceeded (max %d).", UINT8_MAX);
     return;
   }
 
   if (pop_count > 0) {
-    _ouo_c_write_u8(c, ast, OUO_OP_POPN);
+    _ouo_c_write_u8(c, ast, OUO_OP_POP_N);
     _ouo_c_write_u8(c, ast, (uint8_t)pop_count);
   }
 #else
@@ -3353,11 +3376,16 @@ static const char *_ouo_op_code_str(OuoOpCode op_code) {
   switch (op_code) {
     // Objects
     case OUO_OP_POP: return "POP";
-    case OUO_OP_POPN: return "POPN";
+    case OUO_OP_POP_N: return "POP_N";
     case OUO_OP_GET: return "GET";
     case OUO_OP_SET: return "SET";
     case OUO_OP_GET_GLOBAL: return "GET_GLOBAL";
     case OUO_OP_LIT: return "LIT";
+    case OUO_OP_PUSH_0: return "PUSH_0";
+    case OUO_OP_PUSH_1: return "PUSH_1";
+    case OUO_OP_PUSH_INT8: return "PUSH_INT8";
+    case OUO_OP_PUSH_TRUE: return "PUSH_TRUE";
+    case OUO_OP_PUSH_FALSE: return "PUSH_FALSE";
 
     // Arithmetic
     case OUO_OP_ADD_INT: return "ADD_INT";
@@ -3422,13 +3450,13 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
 
   switch (op_code) {
     // Objects
-    case OUO_OP_POPN:
+    case OUO_OP_POP_N:
     case OUO_OP_GET:
     case OUO_OP_SET:
     case OUO_OP_RETURN:
     case OUO_OP_RETURN_VOID: {
-      uint8_t n = _ouo_chunk_read_u8(ip);
-      ouo_printdbg("%4d ", n);
+      uint8_t u8 = _ouo_chunk_read_u8(ip);
+      ouo_printdbg("%4d ", u8);
       break;
     }
     case OUO_OP_GET_GLOBAL: {
@@ -3441,6 +3469,11 @@ static ptrdiff_t _ouo_chunk_op_dump(OuoChunk *chunk, uint8_t *ip) {
       uint8_t lit_idx = _ouo_chunk_read_u8(ip);
       ouo_printdbg("%4d: ", lit_idx);
       _ouo_obj_dump(&chunk->literals.items[lit_idx]);
+      break;
+    }
+    case OUO_OP_PUSH_INT8: {
+      int8_t int8 = (int8_t)_ouo_chunk_read_u8(ip);
+      ouo_printdbg("%4d ", int8);
       break;
     }
     // Control flow
@@ -3635,7 +3668,7 @@ static inline OuoObject *_ouo_vm_stack_pop(_OuoVm *vm, _OuoCallFrame *fr) {
   return obj;
 }
 
-static inline void _ouo_vm_stack_popn(
+static inline void _ouo_vm_stack_pop_n(
     _OuoVm *vm, _OuoCallFrame *fr, uint8_t n) {
   for (size_t i = 0; i < n; i++) _ouo_vm_stack_pop(vm, fr);
 }
@@ -3692,9 +3725,9 @@ static void _ouo_vm_run(_OuoVm *vm) {
     switch (op) {
       // Objects
       case OUO_OP_POP: _ouo_vm_stack_pop(vm, fr); break;
-      case OUO_OP_POPN: {
+      case OUO_OP_POP_N: {
         uint8_t pop_count = _ouo_chunk_read_u8(fr->ip);
-        _ouo_vm_stack_popn(vm, fr, pop_count);
+        _ouo_vm_stack_pop_n(vm, fr, pop_count);
         break;
       }
       case OUO_OP_GET: {
@@ -3717,6 +3750,23 @@ static void _ouo_vm_run(_OuoVm *vm) {
         _ouo_vm_stack_push(vm, fr, &lit);
         break;
       }
+      case OUO_OP_PUSH_0:
+        _ouo_vm_stack_push(vm, fr, &_ouo_obj_new_int(0));
+        break;
+      case OUO_OP_PUSH_1:
+        _ouo_vm_stack_push(vm, fr, &_ouo_obj_new_int(1));
+        break;
+      case OUO_OP_PUSH_INT8: {
+        int8_t int8 = (int8_t)_ouo_chunk_read_u8(fr->ip);
+        _ouo_vm_stack_push(vm, fr, &_ouo_obj_new_int(int8));
+        break;
+      }
+      case OUO_OP_PUSH_TRUE:
+        _ouo_vm_stack_push(vm, fr, &_ouo_obj_new_bool(true));
+        break;
+      case OUO_OP_PUSH_FALSE:
+        _ouo_vm_stack_push(vm, fr, &_ouo_obj_new_bool(false));
+        break;
 
       // Arithmetic
       case OUO_OP_ADD_INT: _OUO_VM_BINARY(vm, fr, int, +); break;
@@ -3801,7 +3851,7 @@ static void _ouo_vm_run(_OuoVm *vm) {
             op != OUO_OP_RETURN_VOID ? _ouo_vm_stack_pop_noderef(vm, fr) : NULL;
 
         uint8_t pop_count = _ouo_chunk_read_u8(fr->ip);
-        _ouo_vm_stack_popn(vm, fr, pop_count);
+        _ouo_vm_stack_pop_n(vm, fr, pop_count);
 
         vm->frame_count--;
         if (vm->frame_count == 0) return;
