@@ -67,10 +67,9 @@ var b: bool = true
 var b: bool = false
 ```
 
-- [ ] string
+- [x] string
 
 ```ouo
-var s: str = 'ass'
 var s: str = "ass"
 ```
 
@@ -78,7 +77,6 @@ var s: str = "ass"
 
 ```ouo
 var t: str = "ass \(i + 5)"
-var t2: str = "ass \(if (i > 2) {) blast \(})"
 ```
 
 - [ ] raw string
@@ -122,20 +120,20 @@ type MaybeInt: opt[int]
 - [ ] array
 
 ```ouo
-var a = arr[int][1, 2, 3]
+var a: arr[int] = [1, 2, 3]
 var e = a.(0)
 
-var aa: arr[arr[int]] = _[
-	_[1, 2, 3],
-	_[4, 5, 6],
-	_[7, 8, 9],
+var aa: arr[arr[int]] = [
+	[1, 2, 3],
+	[4, 5, 6],
+	[7, 8, 9],
 ]
 ```
 
 - [ ] record
 
 ```ouo
-var r = rec[ass: int][.ass: 5]
+var r: rec[ass: int] = [.ass: 5]
 var e = r.ass
 
 type Point: rec[
@@ -143,7 +141,7 @@ type Point: rec[
 	y: int,
 ]
 
-var p: Point = _[
+var p = Point[
 	.x: 5,
 	.y: 10,
 ]
@@ -254,7 +252,7 @@ sum = for (#acc: int = 0, array as n) #acc + n
 
 ## Functions
 
-- [ ] functions
+- [x] functions
 
 ```ouo
 fn ass(blast: int): int => {
