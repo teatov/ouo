@@ -3816,7 +3816,7 @@ typedef struct {
   OuoChunk *chunk;
   uint8_t *ip;
   uint8_t *end_ip;
-  OuoObject *stack_top;
+  OuoObject *stack;
 } _OuoCallFrame;
 
 typedef struct {
@@ -3843,7 +3843,7 @@ static inline void _ouo_vm_frame_init(
   fr->chunk = chunk;
   fr->ip = chunk->bytecode.items;
   fr->end_ip = fr->chunk->bytecode.items + fr->chunk->bytecode.count;
-  fr->stack_top = vm->res->stack.top - stack_offset;
+  fr->stack = vm->res->stack.top - stack_offset;
 }
 
 static inline void _ouo_vm_init(
@@ -4018,12 +4018,13 @@ static void _ouo_vm_run(_OuoVm *vm) {
       }
       case OUO_OP_GET: {
         uint8_t idx = _ouo_chunk_read_u8(fr->ip);
-        _ouo_vm_stack_push(vm, fr, &fr->stack_top[idx]);
+        _ouo_vm_stack_push(vm, fr, &fr->stack[idx]);
         break;
       }
       case OUO_OP_SET: {
         uint8_t idx = _ouo_chunk_read_u8(fr->ip);
-        fr->stack_top[idx] = *_ouo_vm_stack_pop(vm, fr);
+        _ouo_obj_deref(&fr->stack[idx]);
+        fr->stack[idx] = *_ouo_vm_stack_pop_noderef(vm, fr);
         break;
       }
       case OUO_OP_GET_GLOBAL: {
@@ -4064,13 +4065,15 @@ static void _ouo_vm_run(_OuoVm *vm) {
       case OUO_OP_ADD_INT: _OUO_VM_BINARY(vm, fr, int, +); break;
       case OUO_OP_ADD_FLOAT: _OUO_VM_BINARY(vm, fr, float, +); break;
       case OUO_OP_ADD_STR: {
-        OuoRcStr *b = (OuoRcStr *)_ouo_vm_stack_peek(vm, fr, 0)->as.ref;
-        OuoRcStr *a = (OuoRcStr *)_ouo_vm_stack_peek(vm, fr, 1)->as.ref;
+        OuoObject *b_obj = _ouo_vm_stack_pop_noderef(vm, fr);
+        OuoObject *a_obj = _ouo_vm_stack_pop_noderef(vm, fr);
+        OuoRcStr *b = (OuoRcStr *)b_obj->as.ref;
+        OuoRcStr *a = (OuoRcStr *)a_obj->as.ref;
         OuoRcStr *rc = _ouo_rc_new_str();
         ouo_da_append_many(&rc->str, a->str.items, a->str.count);
         ouo_da_append_many(&rc->str, b->str.items, b->str.count);
-        _ouo_vm_stack_pop(vm, fr);
-        _ouo_vm_stack_pop(vm, fr);
+        _ouo_obj_deref(a_obj);
+        _ouo_obj_deref(b_obj);
         _ouo_vm_stack_push(vm, fr, &_ouo_obj_new_str(rc));
         break;
       }
