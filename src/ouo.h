@@ -549,7 +549,7 @@ typedef enum {
   OUO_OP_JUMP,          // u16 offset
   OUO_OP_JUMP_IF_FALSE, // u16 offset: [... v] -> [...]
   OUO_OP_LOOP,          // u16 offset
-  OUO_OP_CALL,        // u8 argc: [... argN ... arg1 callee] -> [argN ... arg1]
+  OUO_OP_CALL,        // u8 argc: [... arg1 ... argN callee] -> [arg1 ... argN]
   OUO_OP_RETURN,      // u8 pop_count: [... vN ... v1] -> [...]
   OUO_OP_RETURN_VOID, // u8 pop_count: [... vN ... v1] -> [...]
   // Input/output
@@ -653,8 +653,8 @@ typedef struct {
   size_t count;
 } OuoRc;
 
-typedef bool (*OuoBuiltinFn)(struct OuoObject *arg3, struct OuoObject *arg2,
-    struct OuoObject *arg1, struct OuoObject *ret);
+typedef bool (*OuoBuiltinFn)(struct OuoObject *arg1, struct OuoObject *arg2,
+    struct OuoObject *arg3, struct OuoObject *ret);
 
 typedef struct OuoObject {
   OuoObjectKind kind;
@@ -3431,8 +3431,8 @@ static OuoTypeRef _ouo_bi_nice_type = {
 
 #ifndef OUO_NOEMIT
 static bool _ouo_bi_nice(
-    OuoObject *arg3, OuoObject *arg2, OuoObject *arg1, OuoObject *ret) {
-  (void)arg1, (void)arg2, (void)arg3;
+    OuoObject *arg1, OuoObject *arg2, OuoObject *arg3, OuoObject *ret) {
+  (void)arg2, (void)arg3;
   ouo_print("NICE %" OUO_PRId "!!!\n", arg1->as.v_int);
   *ret = _ouo_obj_new_int(arg1->as.v_int * 2);
   return true;
@@ -3449,22 +3449,22 @@ static OuoTypeRef _ouo_bi_fcheck_type = {
 
 #ifndef OUO_NOEMIT
 static bool _ouo_bi_isinf(
-    OuoObject *arg3, OuoObject *arg2, OuoObject *arg1, OuoObject *ret) {
-  (void)arg1, (void)arg2, (void)arg3;
+    OuoObject *arg1, OuoObject *arg2, OuoObject *arg3, OuoObject *ret) {
+  (void)arg2, (void)arg3;
   *ret = _ouo_obj_new_bool(isinf(arg1->as.v_float));
   return true;
 }
 
 static bool _ouo_bi_isnan(
-    OuoObject *arg3, OuoObject *arg2, OuoObject *arg1, OuoObject *ret) {
-  (void)arg1, (void)arg2, (void)arg3;
+    OuoObject *arg1, OuoObject *arg2, OuoObject *arg3, OuoObject *ret) {
+  (void)arg2, (void)arg3;
   *ret = _ouo_obj_new_bool(isnan(arg1->as.v_float));
   return true;
 }
 
 static bool _ouo_bi_signbit(
-    OuoObject *arg3, OuoObject *arg2, OuoObject *arg1, OuoObject *ret) {
-  (void)arg1, (void)arg2, (void)arg3;
+    OuoObject *arg1, OuoObject *arg2, OuoObject *arg3, OuoObject *ret) {
+  (void)arg2, (void)arg3;
   *ret = _ouo_obj_new_bool(signbit(arg1->as.v_float));
   return true;
 }
@@ -4128,15 +4128,15 @@ static void _ouo_vm_run(_OuoVm *vm) {
             ouo_printdbg("%.*s:\n", OUO_STRSL_FMT(fr->chunk->name));
 #endif
         } else {
-          OuoBuiltinFn fn = obj->as.bifn;
-          OuoObject *arg1 =
-              argc >= 1 ? _ouo_vm_stack_pop_noderef(vm, fr) : NULL;
-          OuoObject *arg2 =
-              argc >= 2 ? _ouo_vm_stack_pop_noderef(vm, fr) : NULL;
+          OuoBuiltinFn builtin_fn = obj->as.bifn;
           OuoObject *arg3 =
               argc >= 3 ? _ouo_vm_stack_pop_noderef(vm, fr) : NULL;
+          OuoObject *arg2 =
+              argc >= 2 ? _ouo_vm_stack_pop_noderef(vm, fr) : NULL;
+          OuoObject *arg1 =
+              argc >= 1 ? _ouo_vm_stack_pop_noderef(vm, fr) : NULL;
           OuoObject ret = {0};
-          bool has_ret = fn(arg3, arg2, arg1, &ret);
+          bool has_ret = builtin_fn(arg1, arg2, arg3, &ret);
           if (has_ret) _ouo_vm_stack_push(vm, fr, &ret);
         }
 
