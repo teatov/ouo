@@ -306,7 +306,7 @@ type Vec2: rec[
 }
 
 var v = Vec2[.x: 1.0, .y: 2.0]
-Vec2.double(v)
+Vec2::double(v)
 ```
 
 ## Traits
