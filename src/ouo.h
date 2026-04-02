@@ -1026,8 +1026,9 @@ static OuoToken _ouo_l_read_number(_OuoLexer *l) {
 }
 
 static OuoToken _ouo_l_read_string(_OuoLexer *l) {
-  while (_ouo_l_peek(l) != '"' && !_ouo_l_is_eof(l)) _ouo_l_advance(l);
-  if (!_ouo_l_is_eof(l)) _ouo_l_advance(l);
+  while (_ouo_l_peek(l) != '"' && _ouo_l_peek(l) != '\n' && !_ouo_l_is_eof(l))
+    _ouo_l_advance(l);
+  if (_ouo_l_peek(l) != '\n' && !_ouo_l_is_eof(l)) _ouo_l_advance(l);
   return _ouo_l_tok_new(l, OUO_TOK_LIT_STR);
 }
 
@@ -1398,7 +1399,11 @@ static OuoAst *_ouo_p_lit_str(_OuoParser *p) {
   ast->as.lit_str.items = NULL;
   ast->as.lit_str.count = 0;
   ast->as.lit_str.capacity = 0;
-  ouo_da_append_many(&ast->as.lit_str, p->curr.str.start, p->curr.str.len);
+  ouo_da_append_many(
+      &ast->as.lit_str, p->curr.str.start + 1, p->curr.str.len - 2);
+
+  if (*(p->curr.str.start + p->curr.str.len - 1) != '"')
+    _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Unterminated string.");
   return ast;
 }
 
@@ -2880,7 +2885,7 @@ static void _ouo_c_ast_emit(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_LIT_STR: {
       OuoRcStr *rc = _ouo_rc_new_str();
       ouo_da_append_many(
-          &rc->str, ast->as.lit_str.items + 1, ast->as.lit_str.count - 2);
+          &rc->str, ast->as.lit_str.items, ast->as.lit_str.count);
       _ouo_c_emit_lit(c, ast, &_ouo_obj_new_str(rc));
       break;
     }
