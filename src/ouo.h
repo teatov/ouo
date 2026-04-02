@@ -919,6 +919,14 @@ static inline bool _ouo_l_is_eof(_OuoLexer *l) { return *l->curr == '\0'; }
 
 static inline bool _ouo_l_isdigit(char c) { return c >= '0' && c <= '9'; }
 
+static inline bool _ouo_l_ishex(char c) {
+  return _ouo_l_isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+static inline int _ouo_l_hexval(char c) {
+  return (c <= '9') ? (c - '0') : (c <= 'F') ? (c - 'A' + 10) : (c - 'a' + 10);
+}
+
 static inline bool _ouo_l_isalpha(char c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
@@ -1026,8 +1034,10 @@ static OuoToken _ouo_l_read_number(_OuoLexer *l) {
 }
 
 static OuoToken _ouo_l_read_string(_OuoLexer *l) {
-  while (_ouo_l_peek(l) != '"' && _ouo_l_peek(l) != '\n' && !_ouo_l_is_eof(l))
+  while (_ouo_l_peek(l) != '"' && _ouo_l_peek(l) != '\n' && !_ouo_l_is_eof(l)) {
+    if (_ouo_l_peek(l) == '\\') _ouo_l_advance(l);
     _ouo_l_advance(l);
+  }
   if (_ouo_l_peek(l) != '\n' && !_ouo_l_is_eof(l)) _ouo_l_advance(l);
   return _ouo_l_tok_new(l, OUO_TOK_LIT_STR);
 }
@@ -1395,12 +1405,61 @@ static OuoAst *_ouo_p_lit_bool(_OuoParser *p) {
 }
 
 static OuoAst *_ouo_p_lit_str(_OuoParser *p) {
+  p->panic_mode = false;
   OuoAst *ast = _ouo_ast_new(&p->curr, OUO_AST_LIT_STR);
   ast->as.lit_str.items = NULL;
   ast->as.lit_str.count = 0;
   ast->as.lit_str.capacity = 0;
-  ouo_da_append_many(
-      &ast->as.lit_str, p->curr.str.start + 1, p->curr.str.len - 2);
+
+  const char *end = p->curr.str.start + p->curr.str.len - 1;
+  for (const char *c = p->curr.str.start + 1; c < end; c++) {
+    if (p->panic_mode) break;
+    if (*c != '\\') {
+      ouo_da_append(&ast->as.lit_str, *c);
+      continue;
+    }
+    c++;
+    if (c >= end) {
+      _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Unterminated string.");
+      break;
+    }
+    char esc = '\\';
+    switch (*c) {
+      case 'n': esc = '\n'; break;
+      case 'r': esc = '\r'; break;
+      case 't': esc = '\t'; break;
+      case '\\': esc = '\\'; break;
+      case '\'': esc = '\''; break;
+      case '"': esc = '\"'; break;
+      case 'x': {
+        if (c + 2 >= end) {
+          _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Incomplete hex escape code.");
+          break;
+        }
+        char h1 = *(c + 1);
+        char h2 = *(c + 2);
+
+        if (!_ouo_l_ishex(h1) || !_ouo_l_ishex(h2)) {
+          _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX,
+              "Invalid hex escape '\\x%c%c'.", h1, h2);
+          break;
+        }
+
+        int v1 = _ouo_l_hexval(h1);
+        int v2 = _ouo_l_hexval(h2);
+        int v = (v1 << 4) | v2;
+        esc = (char)v;
+        c += 2;
+        break;
+      }
+      default:
+        esc = *c;
+        _ouo_p_err(
+            p, p->curr, OUO_ERR_SYNTAX, "Unknown escape sequence '\\%c'.", *c);
+        break;
+    }
+    ouo_da_append(&ast->as.lit_str, esc);
+  }
 
   if (*(p->curr.str.start + p->curr.str.len - 1) != '"')
     _ouo_p_err(p, p->curr, OUO_ERR_SYNTAX, "Unterminated string.");

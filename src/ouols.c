@@ -88,20 +88,19 @@ static void json_str_unescaped(OuoString *owned, OuoStringSlice *s) {
       continue;
     }
     c++;
+    char esc = '\\';
     switch (*c) {
-      case '"': ouo_da_append(owned, '\"'); break;
-      case '\\': ouo_da_append(owned, '\\'); break;
-      case '/': ouo_da_append(owned, '/'); break;
-      case 'b': ouo_da_append(owned, '\b'); break;
-      case 'f': ouo_da_append(owned, '\f'); break;
-      case 'n': ouo_da_append(owned, '\n'); break;
-      case 'r': ouo_da_append(owned, '\r'); break;
-      case 't': ouo_da_append(owned, '\t'); break;
-      default:
-        ouo_da_append(owned, '\\');
-        ouo_da_append(owned, *c);
-        break;
+      case '"': esc = '\"'; break;
+      case '\\': esc = '\\'; break;
+      case '/': esc = '/'; break;
+      case 'b': esc = '\b'; break;
+      case 'f': esc = '\f'; break;
+      case 'n': esc = '\n'; break;
+      case 'r': esc = '\r'; break;
+      case 't': esc = '\t'; break;
+      default: esc = *c; break;
     }
+    ouo_da_append(owned, esc);
   }
   ouo_da_append(owned, '\0');
 }
