@@ -869,11 +869,15 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
 
   ouo_printerr(OUO_ED);
   if (path != NULL) ouo_printerr("%s:", path);
-  ouo_printerr("%zu:", err->pos.line);
-  if (err->pos.col != 0) ouo_printerr("%zu:", err->pos.col);
+  if (err->pos.line != 0) {
+    ouo_printerr("%zu:", err->pos.line);
+    if (err->pos.col != 0) ouo_printerr("%zu:", err->pos.col);
+  }
+  if (path != NULL || err->pos.line != 0) ouo_printerr(" ");
   if (err->fn_name.start != NULL && err->fn_name.len > 0)
-    ouo_printerr(" %.*s:", OUO_STRSL_FMT(err->fn_name));
-  ouo_printerr(OUO_ER "%s %s: " OUO_EBR "%s" OUO_ER,
+    ouo_printerr("%.*s: ", OUO_STRSL_FMT(err->fn_name));
+
+  ouo_printerr(OUO_ER "%s%s: " OUO_EBR "%s" OUO_ER,
       err->code == OUO_ERR_NOTE ? OUO_EBD : OUO_EBRED,
       _ouo_err_code_str(err->code), err->msg);
 
@@ -2127,7 +2131,7 @@ static inline bool _ouo_chunk_find_sym(
   return false;
 }
 
-static inline bool _ouo_c_find_sym(
+static inline bool _ouo_c_find_local_or_global_sym(
     _OuoCompiler *c, OuoStringSlice *name, OuoSymbol **res_sym) {
   if (_ouo_chunk_find_sym(&c->res->local_syms, name, res_sym)) return true;
   else if (_ouo_chunk_find_sym(&c->res->global_syms, name, res_sym))
@@ -2145,15 +2149,6 @@ static inline OuoTypeRef *_ouo_c_add_type_ref(
 static inline OuoSymbol *_ouo_c_chunk_add_sym(_OuoCompiler *c,
     OuoChunkSymbols *syms, OuoSymbolKind kind, OuoStringSlice *name,
     OuoType *type, OuoToken *tok) {
-  OuoSymbol *found_sym = NULL;
-  if (_ouo_c_find_sym(c, name, &found_sym)) {
-    _ouo_c_err(c, *tok, OUO_ERR_SEMANTIC, "Symbol '%.*s' is already defined.",
-        OUO_STRSL_FMT(found_sym->name));
-    _ouo_c_err_append(
-        c, found_sym->tok, OUO_ERR_NOTE, "Previous definition here.");
-    return NULL;
-  }
-
   if (c->res->failed && c->res->keep_module_scope) return NULL;
 
   OuoSymbol sym = {
@@ -2170,9 +2165,18 @@ static inline OuoSymbol *_ouo_c_chunk_add_sym(_OuoCompiler *c,
 
 static inline OuoSymbol *_ouo_c_add_local_sym(
     _OuoCompiler *c, OuoToken *name, OuoType *type) {
-  if (c->res->local_syms.count >= UINT8_MAX) {
+  if (c->res->local_syms.count > UINT8_MAX) {
     _ouo_c_err(c, *name, OUO_ERR_COMPILE_FAIL,
         "Maximum amount of local symbols exceeded (max %d).", UINT8_MAX + 1);
+    return NULL;
+  }
+
+  OuoSymbol *found_sym = NULL;
+  if (_ouo_c_find_local_or_global_sym(c, &name->str, &found_sym)) {
+    _ouo_c_err(c, *name, OUO_ERR_SEMANTIC, "Symbol '%.*s' is already defined.",
+        OUO_STRSL_FMT(found_sym->name));
+    _ouo_c_err_append(
+        c, found_sym->tok, OUO_ERR_NOTE, "Previous definition here.");
     return NULL;
   }
 
@@ -2182,9 +2186,18 @@ static inline OuoSymbol *_ouo_c_add_local_sym(
 
 static inline OuoSymbol *_ouo_c_add_global_sym(
     _OuoCompiler *c, OuoToken *name, OuoType *type) {
-  if (c->res->global_syms.count >= UINT8_MAX) {
+  if (c->res->global_syms.count > UINT8_MAX) {
     _ouo_c_err(c, *name, OUO_ERR_COMPILE_FAIL,
         "Maximum amount of global symbols exceeded (max %d).", UINT8_MAX + 1);
+    return NULL;
+  }
+
+  OuoSymbol *found_sym = NULL;
+  if (_ouo_c_find_local_or_global_sym(c, &name->str, &found_sym)) {
+    _ouo_c_err(c, *name, OUO_ERR_SEMANTIC, "Symbol '%.*s' is already defined.",
+        OUO_STRSL_FMT(found_sym->name));
+    _ouo_c_err_append(
+        c, found_sym->tok, OUO_ERR_NOTE, "Previous definition here.");
     return NULL;
   }
 
@@ -2194,15 +2207,28 @@ static inline OuoSymbol *_ouo_c_add_global_sym(
 
 static inline OuoSymbol *_ouo_c_add_builtin_sym(
     _OuoCompiler *c, OuoStringSlice *name, OuoType *type) {
-  if (c->res->builtin_syms.count >= UINT8_MAX) {
+  if (c->res->builtin_syms.count > UINT8_MAX) {
     _ouo_c_err(c, (OuoToken){0}, OUO_ERR_COMPILE_FAIL,
         "Maximum amount of builtin symbols exceeded (max %d).", UINT8_MAX + 1);
     return NULL;
   }
 
-  OuoSymbol *sym = _ouo_c_chunk_add_sym(
+  OuoSymbol *found_sym = NULL;
+  if (_ouo_chunk_find_sym(&c->res->builtin_syms, name, &found_sym)) {
+    _ouo_c_err(c, (OuoToken){0}, OUO_ERR_SEMANTIC,
+        "Builtin '@%.*s' is already defined.", OUO_STRSL_FMT(found_sym->name));
+    return NULL;
+  }
+
+  if (type->kind == OUO_TYPE_FN && type->ref->as.t_fn.params.count > 3) {
+    _ouo_c_err(c, (OuoToken){0}, OUO_ERR_COMPILE_FAIL,
+        "Builtin functions cannot have more than 3 parameters (got %zu).",
+        type->ref->as.t_fn.params.count);
+    return NULL;
+  }
+
+  return _ouo_c_chunk_add_sym(
       c, &c->res->builtin_syms, OUO_SYM_BUILTIN, name, type, NULL);
-  return sym;
 }
 
 // Static analysis
@@ -2391,7 +2417,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
     case OUO_AST_MODULE: ast->type.kind = OUO_TYPE_VOID; break;
     case OUO_AST_IDENT: {
       OuoSymbol *sym = NULL;
-      if (_ouo_c_find_sym(c, &ast->as.ident.name, &sym)) {
+      if (_ouo_c_find_local_or_global_sym(c, &ast->as.ident.name, &sym)) {
         ast->type = sym->type;
         ast->as.ident.sym = sym;
       } else _ouo_c_err_ident_undefined(c, ast);
@@ -2688,7 +2714,7 @@ static inline size_t _ouo_chunk_add_obj(OuoObjects *objs, OuoObject *obj) {
 
 static inline void _ouo_c_emit_lit(
     _OuoCompiler *c, OuoAst *ast, OuoObject *obj) {
-  if (c->res->chunk.literals.count >= UINT8_MAX) {
+  if (c->res->chunk.literals.count > UINT8_MAX) {
     _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
         "Maximum amount of literals exceeded (max %d).", UINT8_MAX + 1);
     return;
@@ -2719,7 +2745,7 @@ static inline void _ouo_c_emit_lit(
 
 static inline size_t _ouo_c_add_global_obj(
     _OuoCompiler *c, OuoAst *ast, OuoObject *obj) {
-  if (c->res->chunk.globals.count >= UINT8_MAX) {
+  if (c->res->chunk.globals.count > UINT8_MAX) {
     _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
         "Maximum amount of globals exceeded (max %d).", UINT8_MAX + 1);
     return SIZE_MAX;
@@ -2729,7 +2755,7 @@ static inline size_t _ouo_c_add_global_obj(
 }
 
 static inline size_t _ouo_c_add_builtin_obj(_OuoCompiler *c, OuoObject *obj) {
-  if (c->res->chunk.builtins.count >= UINT8_MAX) {
+  if (c->res->chunk.builtins.count > UINT8_MAX) {
     _ouo_c_err(c, (OuoToken){0}, OUO_ERR_COMPILE_FAIL,
         "Maximum amount of builtins exceeded (max %d).", UINT8_MAX + 1);
     return SIZE_MAX;
@@ -3493,9 +3519,11 @@ static void _ouo_c_register_builtins(_OuoCompiler *c) {
     _OuoBuiltin *builtin = &_ouo_c_builtins[i];
     OuoStringSlice name = {
         .start = builtin->name, .len = strlen(builtin->name)};
-    _ouo_c_add_builtin_sym(c, &name, &builtin->type);
+    OuoSymbol *added = _ouo_c_add_builtin_sym(c, &name, &builtin->type);
 #ifndef OUO_NOEMIT
-    _ouo_c_add_builtin_obj(c, &builtin->obj);
+    if (added != NULL) _ouo_c_add_builtin_obj(c, &builtin->obj);
+#else
+    (void)added;
 #endif
   }
 }
