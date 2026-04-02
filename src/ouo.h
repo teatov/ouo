@@ -2802,9 +2802,7 @@ static inline void _ouo_c_emit_return(
     _OuoCompiler *c, OuoAst *ast, bool is_void) {
   _ouo_c_write_u8(c, ast, is_void ? OUO_OP_RETURN_VOID : OUO_OP_RETURN);
 
-  c->scope_depth--;
-  size_t pop_count = _ouo_c_chunk_scope_pop(c, &c->res->local_syms);
-
+  size_t pop_count = c->res->local_syms.count;
   if (pop_count > UINT8_MAX) {
     _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL,
         "Maximum POP_N count exceeded (max %d).", UINT8_MAX);
@@ -3766,12 +3764,6 @@ static void _ouo_chunk_dump(OuoChunk *chunk) {
     _ouo_obj_dump(&chunk->globals.items[i]);
     ouo_printdbg("] ");
   }
-  ouo_printdbg("\nbuiltins: ");
-  for (size_t i = 0; i < chunk->builtins.count; i++) {
-    ouo_printdbg("[%zu: ", i);
-    _ouo_obj_dump(&chunk->builtins.items[i]);
-    ouo_printdbg("] ");
-  }
   ouo_printdbg("\n");
 
   ouo_printdbg("lines: ");
@@ -3799,14 +3791,6 @@ static void _ouo_c_dump(_OuoCompiler *c, OuoAst *ast) {
   ouo_printdbg("\nglobal syms: ");
   for (size_t i = 0; i < c->res->global_syms.count; i++) {
     OuoSymbol *sym = &c->res->global_syms.items[i];
-    OuoString type_str = _ouo_type_str(&sym->type);
-    ouo_printdbg("[%zu '%.*s' %.*s (%zu)] ", i, OUO_STR_FMT(type_str),
-        OUO_STRSL_FMT(sym->name), sym->scope_depth);
-    ouo_da_free(type_str);
-  }
-  ouo_printdbg("\nbuiltin syms: ");
-  for (size_t i = 0; i < c->res->builtin_syms.count; i++) {
-    OuoSymbol *sym = &c->res->builtin_syms.items[i];
     OuoString type_str = _ouo_type_str(&sym->type);
     ouo_printdbg("[%zu '%.*s' %.*s (%zu)] ", i, OUO_STR_FMT(type_str),
         OUO_STRSL_FMT(sym->name), sym->scope_depth);
