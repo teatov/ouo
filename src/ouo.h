@@ -2820,7 +2820,7 @@ static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
 
 #ifndef OUO_NOEMIT
 
-// Bytecode emission
+// Codegen
 
 static inline size_t _ouo_chunk_get_line(OuoChunk *chunk, const uint8_t *ip) {
   size_t ip_idx = (size_t)(ip - chunk->bytecode.items);

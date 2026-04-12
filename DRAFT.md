@@ -111,7 +111,7 @@ ass('usa')
 - [ ] optional types
 
 ```ouo
-type MaybeInt: un[int, nil]
+type MaybeInt: un[int, none]
 type MaybeInt: opt[int]
 ```
 
@@ -343,9 +343,9 @@ print_area(Rect[.w: 2.0, .h: 3.0])
 
 ```ouo
 if (?a) {
-	print('a is not nil')
+	print('a is not none')
 } else {
-	print('a is nil')
+	print('a is none')
 }
 ```
 
@@ -353,6 +353,13 @@ if (?a) {
 
 ```ouo
 a ~= 1.0
+```
+
+- [ ] remainder and modulo
+
+```ouo
+-16 % 10 == -6
+-16 %% 10 == 4
 ```
 
 ## Modules
