@@ -169,21 +169,15 @@ static inline void test(const char *name, const char *src, TestOptions *opt) {
 
   if (p_res.failed) {
     if (opt->fail) {
-      if (opt->fail_code != OUO_OK) {
-        bool code_ok = false;
-        OUO_DA_FOREACH(OuoError, err, &p_res.errors) {
-          if (err->code == opt->fail_code) {
-            code_ok = true;
-            break;
-          }
+      bool err_code_matches = false;
+      OUO_DA_FOREACH(OuoError, err, &p_res.errors) {
+        if (err->code == opt->fail_code) {
+          err_code_matches = true;
+          break;
         }
-        pass = code_ok;
-        ouo_printerr(
-            pass ? _TEST_PASS "\n" : _TEST_FAIL " (wrong error code)\n");
-      } else {
-        pass = true;
-        ouo_printerr(_TEST_PASS "\n");
       }
+      pass = err_code_matches;
+      ouo_printerr(pass ? _TEST_PASS "\n" : _TEST_FAIL " wrong error code\n");
     } else {
       ouo_printerr(_TEST_FAIL "\n");
       OUO_DA_FOREACH(OuoError, err, &p_res.errors) {
@@ -221,10 +215,11 @@ parse_defer:
   if (pass) passes++;
 }
 
-static inline void test_print_total(void) {
+static inline int test_summary(void) {
   ouo_printerr("total: %d/%d ", passes, total);
   ouo_printerr(passes == total ? _TEST_PASS : _TEST_FAIL);
   ouo_printerr("\n");
+  return passes < total ? 1 : 0;
 }
 
 #endif // TEST_H
