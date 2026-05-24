@@ -6,34 +6,36 @@
 
 static inline void test_parse_exp_ast(
     const char *name, const char *src, OuoAst *exp) {
-  TestOptions opt = {.exp_ast = exp};
+  TestOptions opt = {.stage = TEST_PARSE, .exp_ast = exp};
   test(name, src, &opt);
 }
 
 static inline void test_parse_exp_ast_expr(
     const char *name, const char *src, OuoAst *exp) {
-  TestOptions opt = {.exp_ast_expr = exp};
+  TestOptions opt = {.stage = TEST_PARSE, .exp_ast_expr = exp};
   test(name, src, &opt);
 }
 
 static inline void test_parse_exp_ast_stmt(
     const char *name, const char *src, OuoAst *exp) {
-  TestOptions opt = {.exp_ast_stmt = exp};
+  TestOptions opt = {.stage = TEST_PARSE, .exp_ast_stmt = exp};
   test(name, src, &opt);
 }
 
 static inline void test_parse(const char *name, const char *src) {
-  TestOptions opt = {0};
+  TestOptions opt = {.stage = TEST_PARSE};
   test(name, src, &opt);
 }
 
 static inline void test_err_syntax(const char *msg, const char *src) {
-  TestOptions opt = {.fail = true, .fail_code = OUO_ERR_SYNTAX};
+  TestOptions opt = {
+      .stage = TEST_PARSE, .fail = true, .fail_code = OUO_ERR_SYNTAX};
   test(msg, src, &opt);
 }
 
 static inline void test_err_parse_fail(const char *msg, const char *src) {
-  TestOptions opt = {.fail = true, .fail_code = OUO_ERR_PARSE_FAIL};
+  TestOptions opt = {
+      .stage = TEST_PARSE, .fail = true, .fail_code = OUO_ERR_PARSE_FAIL};
   test(msg, src, &opt);
 }
 
