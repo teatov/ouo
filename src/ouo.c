@@ -12,7 +12,10 @@
 #include "ouo.h"
 
 static OuoErrorCode run(const char *src, const char *path,
-    OuoParseResult *p_res, OuoCompileResult *c_res, OuoInterpretResult *i_res) {
+    OuoParseResult *p_res, OuoAnalyzeResult *a_res) {
+  // static OuoErrorCode run(const char *src, const char *path,
+  // OuoParseResult *p_res, OuoCompileResult *c_res, OuoInterpretResult *i_res)
+  // {
   OuoErrorCode err_code = OUO_OK;
 
   ouo_parse(src, p_res);
@@ -25,30 +28,45 @@ static OuoErrorCode run(const char *src, const char *path,
     goto parse_defer;
   }
 
-  ouo_compile(p_res->ast, c_res);
+  ouo_analyze(p_res->ast, a_res);
 
 parse_defer:
-  ouo_p_res_free(p_res);
-  if (p_res->failed) return err_code;
+  if (p_res->failed) {
+    ouo_p_res_free(p_res);
+    return err_code;
+  }
 
-  if (c_res->failed) {
-    OUO_DA_FOREACH(OuoError, err, &c_res->errors) {
+  if (a_res->failed) {
+    OUO_DA_FOREACH(OuoError, err, &a_res->errors) {
       ouo_err_msg_print(err, src, path);
       err_code = err->code;
     }
-    goto compile_defer;
+    goto analyze_defer;
   }
 
-  ouo_interpret(&c_res->chunk, i_res);
+  // ouo_compile(p_res->ast, c_res);
 
-compile_defer:
-  ouo_c_res_free(c_res);
-  if (c_res->failed) return err_code;
+analyze_defer:
+  ouo_p_res_free(p_res);
+  ouo_a_res_free(a_res);
+  //   if (c_res->failed) {
+  //     OUO_DA_FOREACH(OuoError, err, &c_res->errors) {
+  //       ouo_err_msg_print(err, src, path);
+  //       err_code = err->code;
+  //     }
+  //     goto compile_defer;
+  //   }
 
-  if (i_res->failed) {
-    ouo_err_msg_print(&i_res->error, src, path);
-    err_code = i_res->error.code;
-  }
+  //   ouo_interpret(&c_res->chunk, i_res);
+
+  // compile_defer:
+  //   ouo_c_res_free(c_res);
+  //   if (c_res->failed) return err_code;
+
+  //   if (i_res->failed) {
+  //     ouo_err_msg_print(&i_res->error, src, path);
+  //     err_code = i_res->error.code;
+  //   }
 
   return err_code;
 }
@@ -79,8 +97,9 @@ static OuoErrorCode start_repl(void) {
   } lines = {0};
 
   OuoParseResult p_res = {0};
-  OuoCompileResult c_res = {.keep_module_scope = true, .echo = true};
-  OuoInterpretResult i_res = {0};
+  OuoAnalyzeResult a_res = {0};
+  // OuoCompileResult c_res = {.keep_module_scope = true, .echo = true};
+  // OuoInterpretResult i_res = {0};
 
   for (;;) {
     ouo_print("ouo> ");
@@ -90,12 +109,13 @@ static OuoErrorCode start_repl(void) {
       break;
     }
 
-    run(line, NULL, &p_res, &c_res, &i_res);
+    run(line, NULL, &p_res, &a_res);
+    // run(line, NULL, &p_res, &c_res, &i_res);
     ouo_da_append(&lines, line);
   }
 
-  ouo_c_res_cleanup(&c_res);
-  ouo_i_res_cleanup(&i_res);
+  // ouo_c_res_cleanup(&c_res);
+  // ouo_i_res_cleanup(&i_res);
   OUO_DA_FOREACH(char *, line, &lines) { ouo_free(*line); }
   ouo_da_free(lines);
   return OUO_OK;
@@ -132,13 +152,15 @@ static OuoErrorCode run_file(const char *path) {
   char *src = read_file(path);
 
   OuoParseResult p_res = {0};
-  OuoCompileResult c_res = {.chunk.name = {.start = path, .len = strlen(path)}};
-  OuoInterpretResult i_res = {0};
+  OuoAnalyzeResult a_res = {0};
+  // OuoCompileResult c_res = {.chunk.name = {.start = path, .len =
+  // strlen(path)}}; OuoInterpretResult i_res = {0};
 
-  OuoErrorCode err_code = run(src, path, &p_res, &c_res, &i_res);
+  OuoErrorCode err_code = run(src, path, &p_res, &a_res);
+  // OuoErrorCode err_code = run(src, path, &p_res, &c_res, &i_res);
 
-  ouo_c_res_cleanup(&c_res);
-  ouo_i_res_cleanup(&i_res);
+  // ouo_c_res_cleanup(&c_res);
+  // ouo_i_res_cleanup(&i_res);
   ouo_free(src);
   return err_code;
 }
