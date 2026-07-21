@@ -366,8 +366,8 @@ typedef enum {
   OUO_AST_LIT_TYPE,
   // Expressions
   OUO_AST_ASSIGN,
-  OUO_AST_BINARY,
-  OUO_AST_UNARY,
+  OUO_AST_BINOP,
+  OUO_AST_UNOP,
   OUO_AST_BLOCK,
   OUO_AST_IF,
   OUO_AST_WHILE,
@@ -440,12 +440,12 @@ typedef struct OuoAst {
       struct OuoAst *left;
       OuoTokenKind op;
       struct OuoAst *right;
-    } binary;
+    } binop;
 
     struct {
       OuoTokenKind op;
       struct OuoAst *right;
-    } unary;
+    } unop;
 
     struct {
       struct OuoAst *condition;
@@ -1544,16 +1544,16 @@ static OuoAst *_ouo_p_assign(_OuoParser *p, OuoAst *left) {
   return ast;
 }
 
-static OuoAst *_ouo_p_binary(_OuoParser *p, OuoAst *left) {
+static OuoAst *_ouo_p_binop(_OuoParser *p, OuoAst *left) {
   OuoToken op = p->curr;
   _OuoPrecedence prec = _ouo_p_get_rule(p, op.kind)->prec;
   _ouo_p_advance(p);
   OuoAst *right = _ouo_p_expr(p, prec);
 
-  OuoAst *ast = _ouo_ast_new(&op, OUO_AST_BINARY);
-  ast->as.binary.left = left;
-  ast->as.binary.op = op.kind;
-  ast->as.binary.right = right;
+  OuoAst *ast = _ouo_ast_new(&op, OUO_AST_BINOP);
+  ast->as.binop.left = left;
+  ast->as.binop.op = op.kind;
+  ast->as.binop.right = right;
   return ast;
 }
 
@@ -1562,9 +1562,9 @@ static OuoAst *_ouo_p_unary(_OuoParser *p) {
   _ouo_p_advance(p);
   OuoAst *right = _ouo_p_expr(p, _OUO_PREC_UNARY);
 
-  OuoAst *ast = _ouo_ast_new(&op, OUO_AST_UNARY);
-  ast->as.unary.op = op.kind;
-  ast->as.unary.right = right;
+  OuoAst *ast = _ouo_ast_new(&op, OUO_AST_UNOP);
+  ast->as.unop.op = op.kind;
+  ast->as.unop.right = right;
   return ast;
 }
 
@@ -1925,8 +1925,8 @@ static const _OuoParseRule _ouo_p_rules[] = {
     [OUO_TOK_IDENT] = {_ouo_p_ident, NULL, _OUO_PREC_LOWEST},
     [OUO_TOK_BUILTIN] = {_ouo_p_builtin, NULL, _OUO_PREC_LOWEST},
     // Keywords
-    [OUO_TOK_KW_OR] = {NULL, _ouo_p_binary, _OUO_PREC_OR},
-    [OUO_TOK_KW_AND] = {NULL, _ouo_p_binary, _OUO_PREC_AND},
+    [OUO_TOK_KW_OR] = {NULL, _ouo_p_binop, _OUO_PREC_OR},
+    [OUO_TOK_KW_AND] = {NULL, _ouo_p_binop, _OUO_PREC_AND},
     [OUO_TOK_KW_IF] = {_ouo_p_if, NULL, _OUO_PREC_LOWEST},
     [OUO_TOK_KW_WHILE] = {_ouo_p_while, NULL, _OUO_PREC_LOWEST},
     // Literals
@@ -1937,16 +1937,16 @@ static const _OuoParseRule _ouo_p_rules[] = {
     [OUO_TOK_LIT_STR] = {_ouo_p_lit_str, NULL, _OUO_PREC_LOWEST},
     // Operators
     [OUO_TOK_ASSIGN] = {NULL, _ouo_p_assign, _OUO_PREC_ASSIGN},
-    [OUO_TOK_PLUS] = {NULL, _ouo_p_binary, _OUO_PREC_SUM},
-    [OUO_TOK_MINUS] = {_ouo_p_unary, _ouo_p_binary, _OUO_PREC_SUM},
-    [OUO_TOK_ASTERISK] = {NULL, _ouo_p_binary, _OUO_PREC_PRODUCT},
-    [OUO_TOK_SLASH] = {NULL, _ouo_p_binary, _OUO_PREC_PRODUCT},
-    [OUO_TOK_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
-    [OUO_TOK_NEQ] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
-    [OUO_TOK_LT] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
-    [OUO_TOK_LT_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
-    [OUO_TOK_GT] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
-    [OUO_TOK_GT_EQ] = {NULL, _ouo_p_binary, _OUO_PREC_COMPARISON},
+    [OUO_TOK_PLUS] = {NULL, _ouo_p_binop, _OUO_PREC_SUM},
+    [OUO_TOK_MINUS] = {_ouo_p_unary, _ouo_p_binop, _OUO_PREC_SUM},
+    [OUO_TOK_ASTERISK] = {NULL, _ouo_p_binop, _OUO_PREC_PRODUCT},
+    [OUO_TOK_SLASH] = {NULL, _ouo_p_binop, _OUO_PREC_PRODUCT},
+    [OUO_TOK_EQ] = {NULL, _ouo_p_binop, _OUO_PREC_COMPARISON},
+    [OUO_TOK_NEQ] = {NULL, _ouo_p_binop, _OUO_PREC_COMPARISON},
+    [OUO_TOK_LT] = {NULL, _ouo_p_binop, _OUO_PREC_COMPARISON},
+    [OUO_TOK_LT_EQ] = {NULL, _ouo_p_binop, _OUO_PREC_COMPARISON},
+    [OUO_TOK_GT] = {NULL, _ouo_p_binop, _OUO_PREC_COMPARISON},
+    [OUO_TOK_GT_EQ] = {NULL, _ouo_p_binop, _OUO_PREC_COMPARISON},
     [OUO_TOK_BANG] = {_ouo_p_unary, NULL, _OUO_PREC_LOWEST},
     // Punctuation
     [OUO_TOK_PAREN_OPN] = {_ouo_p_grouping, _ouo_p_call, _OUO_PREC_ACCESS},
@@ -2008,11 +2008,11 @@ void ouo_ast_free(OuoAst *ast) {
       ouo_ast_free(ast->as.assign.target);
       ouo_ast_free(ast->as.assign.value);
       break;
-    case OUO_AST_BINARY:
-      ouo_ast_free(ast->as.binary.left);
-      ouo_ast_free(ast->as.binary.right);
+    case OUO_AST_BINOP:
+      ouo_ast_free(ast->as.binop.left);
+      ouo_ast_free(ast->as.binop.right);
       break;
-    case OUO_AST_UNARY: ouo_ast_free(ast->as.unary.right); break;
+    case OUO_AST_UNOP: ouo_ast_free(ast->as.unop.right); break;
     case OUO_AST_IF:
       ouo_ast_free(ast->as.if_expr.condition);
       ouo_ast_free(ast->as.if_expr.then_branch);
@@ -2066,8 +2066,8 @@ static const char *_ouo_ast_kind_str(OuoAstKind kind) {
     case OUO_AST_LIT_TYPE: return "LIT_TYPE";
     // Expressions
     case OUO_AST_ASSIGN: return "ASSIGN";
-    case OUO_AST_BINARY: return "BINARY";
-    case OUO_AST_UNARY: return "UNARY";
+    case OUO_AST_BINOP: return "BINOP";
+    case OUO_AST_UNOP: return "UNOP";
     case OUO_AST_BLOCK: return "BLOCK";
     case OUO_AST_IF: return "IF";
     case OUO_AST_WHILE: return "WHILE";
@@ -2141,14 +2141,14 @@ static void _ouo_ast_dump(OuoAst *ast) {
       ouo_printdbg(" %s ", _ouo_tok_kind_str(OUO_TOK_ASSIGN));
       _ouo_ast_dump(ast->as.assign.value);
       break;
-    case OUO_AST_BINARY:
-      _ouo_ast_dump(ast->as.binary.left);
-      ouo_printdbg(" %s ", _ouo_tok_kind_str(ast->as.binary.op));
-      _ouo_ast_dump(ast->as.binary.right);
+    case OUO_AST_BINOP:
+      _ouo_ast_dump(ast->as.binop.left);
+      ouo_printdbg(" %s ", _ouo_tok_kind_str(ast->as.binop.op));
+      _ouo_ast_dump(ast->as.binop.right);
       break;
-    case OUO_AST_UNARY:
-      ouo_printdbg("%s ", _ouo_tok_kind_str(ast->as.unary.op));
-      _ouo_ast_dump(ast->as.unary.right);
+    case OUO_AST_UNOP:
+      ouo_printdbg("%s ", _ouo_tok_kind_str(ast->as.unop.op));
+      _ouo_ast_dump(ast->as.unop.right);
       break;
     case OUO_AST_IF:
       _ouo_ast_dump(ast->as.if_expr.condition);
@@ -2241,9 +2241,242 @@ static inline void _ouo_a_init(_OuoAnalyzer *a, OuoStageResult *res) {
   a->res = res;
 }
 
+static void _ouo_a_err_todo(_OuoAnalyzer *a, OuoAst *ast) {
+  _ouo_a_err(a, ast->tok, OUO_ERR_ANALYZE_FAIL, "TODO %s",
+      _ouo_ast_kind_str(ast->kind));
+}
+
+static void _ouo_a_err_binop_type(_OuoAnalyzer *a, OuoAst *ast) {
+  OuoString left_type_str = _ouo_type_str(&ast->as.binop.left->a_res.type);
+  OuoString right_type_str = _ouo_type_str(&ast->as.binop.right->a_res.type);
+
+  _ouo_a_err(a, ast->tok, OUO_ERR_TYPE,
+      "Operation '%s' does not support '%.*s' and '%.*s'.",
+      _ouo_tok_kind_str(ast->as.binop.op), OUO_STR_FMT(left_type_str),
+      OUO_STR_FMT(right_type_str));
+
+  ouo_da_free(left_type_str);
+  ouo_da_free(right_type_str);
+}
+
+static void _ouo_a_err_unary_type(_OuoAnalyzer *a, OuoAst *ast) {
+  OuoString type_str = _ouo_type_str(&ast->as.unop.right->a_res.type);
+
+  _ouo_a_err(a, ast->tok, OUO_ERR_TYPE,
+      "Operation '%s' does not support '%.*s'.",
+      _ouo_tok_kind_str(ast->as.unop.op), OUO_STR_FMT(type_str));
+
+  ouo_da_free(type_str);
+}
+
+static inline bool _ouo_ast_binop_is(OuoAst *ast, OuoTypeKind type_kind) {
+  return ast->as.binop.left->a_res.type.kind == type_kind &&
+      ast->as.binop.right->a_res.type.kind == type_kind;
+}
+
+static inline bool _ouo_ast_unop_is(OuoAst *ast, OuoTypeKind type_kind) {
+  return ast->as.unop.right->a_res.type.kind == type_kind;
+}
+
 static inline void _ouo_a_ast_visit(_OuoAnalyzer *a, OuoAst *ast) {
   ast->a_res.visited = true;
-  _ouo_a_err(a, ast->tok, OUO_ERR_ANALYZE_FAIL, "TODO");
+
+  switch (ast->kind) {
+    case OUO_AST_MODULE:
+    case OUO_AST_BLOCK:
+      ast->a_res.type.kind = OUO_TYPE_VOID;
+
+      OUO_DA_FOREACH(OuoAst *, stmt_p, &ast->children) {
+        OuoAst *stmt = *stmt_p;
+        _ouo_a_ast_visit(a, stmt);
+      }
+
+      break;
+    case OUO_AST_IDENT: {
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+    case OUO_AST_BUILTIN: {
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+
+    // Literals
+    case OUO_AST_LIT_INT: ast->a_res.type.kind = OUO_TYPE_INT; break;
+    case OUO_AST_LIT_FLOAT: ast->a_res.type.kind = OUO_TYPE_FLOAT; break;
+    case OUO_AST_LIT_BOOL: ast->a_res.type.kind = OUO_TYPE_BOOL; break;
+    case OUO_AST_LIT_STR: ast->a_res.type.kind = OUO_TYPE_STR; break;
+    case OUO_AST_LIT_TYPE: {
+      if (ast->as.lit_type.ident != NULL)
+        _ouo_a_ast_visit(a, ast->as.lit_type.ident);
+
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+
+    // Expressions
+    case OUO_AST_ASSIGN: {
+      _ouo_a_ast_visit(a, ast->as.assign.target);
+      _ouo_a_ast_visit(a, ast->as.assign.value);
+
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+    case OUO_AST_BINOP:
+      _ouo_a_ast_visit(a, ast->as.binop.left);
+      _ouo_a_ast_visit(a, ast->as.binop.right);
+
+      switch (ast->as.binop.op) {
+        // Arithmetic
+        case OUO_TOK_PLUS:
+          if (_ouo_ast_binop_is(ast, OUO_TYPE_INT))
+            ast->a_res.type.kind = OUO_TYPE_INT;
+          else if (_ouo_ast_binop_is(ast, OUO_TYPE_FLOAT))
+            ast->a_res.type.kind = OUO_TYPE_FLOAT;
+          else if (_ouo_ast_binop_is(ast, OUO_TYPE_STR))
+            ast->a_res.type.kind = OUO_TYPE_STR;
+          else _ouo_a_err_binop_type(a, ast);
+          break;
+        case OUO_TOK_MINUS:
+        case OUO_TOK_ASTERISK:
+        case OUO_TOK_SLASH:
+          if (_ouo_ast_binop_is(ast, OUO_TYPE_INT))
+            ast->a_res.type.kind = OUO_TYPE_INT;
+          else if (_ouo_ast_binop_is(ast, OUO_TYPE_FLOAT))
+            ast->a_res.type.kind = OUO_TYPE_FLOAT;
+          else _ouo_a_err_binop_type(a, ast);
+          break;
+
+        // Comparison
+        case OUO_TOK_EQ:
+        case OUO_TOK_NEQ:
+          if (_ouo_ast_binop_is(ast, OUO_TYPE_INT) ||
+              _ouo_ast_binop_is(ast, OUO_TYPE_FLOAT) ||
+              _ouo_ast_binop_is(ast, OUO_TYPE_BOOL))
+            ast->a_res.type.kind = OUO_TYPE_BOOL;
+          else _ouo_a_err_binop_type(a, ast);
+          break;
+        case OUO_TOK_LT:
+        case OUO_TOK_LT_EQ:
+        case OUO_TOK_GT:
+        case OUO_TOK_GT_EQ:
+          if (_ouo_ast_binop_is(ast, OUO_TYPE_INT) ||
+              _ouo_ast_binop_is(ast, OUO_TYPE_FLOAT))
+            ast->a_res.type.kind = OUO_TYPE_BOOL;
+          else _ouo_a_err_binop_type(a, ast);
+          break;
+
+        // Logic
+        case OUO_TOK_KW_OR:
+        case OUO_TOK_KW_AND:
+          if (_ouo_ast_binop_is(ast, OUO_TYPE_BOOL))
+            ast->a_res.type.kind = OUO_TYPE_BOOL;
+          else _ouo_a_err_binop_type(a, ast);
+          break;
+
+        default:
+          _ouo_a_err(a, ast->tok, OUO_ERR_ANALYZE_FAIL,
+              "Unknown binary operator '%s'.",
+              _ouo_tok_kind_str(ast->as.binop.op));
+          break;
+      }
+      break;
+    case OUO_AST_UNOP:
+      _ouo_a_ast_visit(a, ast->as.unop.right);
+
+      switch (ast->as.unop.op) {
+        // Arithmetic
+        case OUO_TOK_MINUS:
+          if (_ouo_ast_unop_is(ast, OUO_TYPE_INT))
+            ast->a_res.type.kind = OUO_TYPE_INT;
+          else if (_ouo_ast_unop_is(ast, OUO_TYPE_FLOAT))
+            ast->a_res.type.kind = OUO_TYPE_FLOAT;
+          else _ouo_a_err_unary_type(a, ast);
+          break;
+
+        // Logic
+        case OUO_TOK_BANG:
+          if (_ouo_ast_unop_is(ast, OUO_TYPE_BOOL))
+            ast->a_res.type.kind = OUO_TYPE_BOOL;
+          else _ouo_a_err_unary_type(a, ast);
+          break;
+
+        default:
+          _ouo_a_err(a, ast->tok, OUO_ERR_COMPILE_FAIL,
+              "Unknown unary operator '%s'.",
+              _ouo_tok_kind_str(ast->as.unop.op));
+          break;
+      }
+      break;
+    case OUO_AST_IF: {
+      _ouo_a_ast_visit(a, ast->as.if_expr.condition);
+      _ouo_a_ast_visit(a, ast->as.if_expr.then_branch);
+      if (ast->as.if_expr.else_branch != NULL)
+        _ouo_a_ast_visit(a, ast->as.if_expr.else_branch);
+
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+    case OUO_AST_WHILE: {
+      _ouo_a_ast_visit(a, ast->as.while_expr.condition);
+      _ouo_a_ast_visit(a, ast->as.while_expr.body);
+
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+    case OUO_AST_CALL: {
+      _ouo_a_ast_visit(a, ast->as.call.target);
+      OUO_DA_FOREACH(OuoAst *, expr_p, &ast->children) {
+        _ouo_a_ast_visit(a, *expr_p);
+      }
+
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+
+    // Statements
+    case OUO_AST_EXPR_STMT: {
+      _ouo_a_ast_visit(a, ast->as.expr_stmt.expr);
+
+      OuoAst *expr = ast->as.expr_stmt.expr;
+      ast->a_res.type = expr->a_res.type;
+      break;
+    }
+    case OUO_AST_PRINT: {
+      _ouo_a_ast_visit(a, ast->as.expr_stmt.expr);
+
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+    case OUO_AST_RETURN: {
+      OuoAst *expr = ast->as.expr_stmt.expr;
+      if (expr != NULL) _ouo_a_ast_visit(a, expr);
+
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+    case OUO_AST_DECL_VAR: {
+      if (ast->as.decl_var.type_annot != NULL)
+        _ouo_a_ast_visit(a, ast->as.decl_var.type_annot);
+      _ouo_a_ast_visit(a, ast->as.decl_var.value);
+
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+    case OUO_AST_DECL_FN: {
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+    case OUO_AST_DECL_TYPE: {
+      _ouo_a_err_todo(a, ast);
+      break;
+    }
+  }
+
+  _ouo_ast_dump(ast);
+  OuoString type_str = _ouo_type_str(&ast->a_res.type);
+  ouo_printdbg(": %.*s\n", (int)type_str.count, type_str.items);
+  ouo_da_free(type_str);
 }
 
 OuoStageResult ouo_analyze(OuoAst *ast) {
@@ -2489,41 +2722,6 @@ OuoStageResult ouo_analyze(OuoAst *ast) {
 //       "Assignment target can only be a variable.");
 // }
 
-// static void _ouo_c_err_binary_type(_OuoCompiler *c, OuoAst *ast) {
-//   OuoString left_type_str = _ouo_type_str(&ast->as.binary.left->type);
-//   OuoString right_type_str = _ouo_type_str(&ast->as.binary.right->type);
-
-//   _ouo_c_err(c, ast->tok, OUO_ERR_TYPE,
-//       "Operation '%s' does not support '%.*s' and '%.*s'.",
-//       _ouo_tok_kind_str(ast->as.binary.op), OUO_STR_FMT(left_type_str),
-//       OUO_STR_FMT(right_type_str));
-
-//   ouo_da_free(left_type_str);
-//   ouo_da_free(right_type_str);
-// }
-
-// static void _ouo_c_err_binary_unknown(_OuoCompiler *c, OuoAst *ast) {
-//   _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL, "Unknown binary operator
-//   '%s'.",
-//       _ouo_tok_kind_str(ast->as.binary.op));
-// }
-
-// static void _ouo_c_err_unary_type(_OuoCompiler *c, OuoAst *ast) {
-//   OuoString type_str = _ouo_type_str(&ast->as.unary.right->type);
-
-//   _ouo_c_err(c, ast->tok, OUO_ERR_TYPE,
-//       "Operation '%s' does not support '%.*s'.",
-//       _ouo_tok_kind_str(ast->as.unary.op), OUO_STR_FMT(type_str));
-
-//   ouo_da_free(type_str);
-// }
-
-// static void _ouo_c_err_unary_unknown(_OuoCompiler *c, OuoAst *ast) {
-//   _ouo_c_err(c, ast->tok, OUO_ERR_COMPILE_FAIL, "Unknown unary operator
-//   '%s'.",
-//       _ouo_tok_kind_str(ast->as.unary.op));
-// }
-
 // static void _ouo_c_err_if_condition_type(_OuoCompiler *c, OuoAst *ast) {
 //   OuoString type_str = _ouo_type_str(&ast->as.if_expr.condition->type);
 
@@ -2624,15 +2822,6 @@ OuoStageResult ouo_analyze(OuoAst *ast) {
 
 //   if (sym == NULL) _ouo_c_err_ident_no_sym(c, ast);
 //   return sym;
-// }
-
-// static inline bool _ouo_ast_binary_is(OuoAst *ast, OuoTypeKind type_kind) {
-//   return ast->as.binary.left->type.kind == type_kind &&
-//       ast->as.binary.right->type.kind == type_kind;
-// }
-
-// static inline bool _ouo_ast_unary_is(OuoAst *ast, OuoTypeKind type_kind) {
-//   return ast->as.unary.right->type.kind == type_kind;
 // }
 
 // static void _ouo_c_ast_analyze(_OuoCompiler *c, OuoAst *ast) {
