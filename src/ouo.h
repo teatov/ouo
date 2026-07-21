@@ -274,6 +274,13 @@ typedef struct {
 /// If `path` is not `NULL`, adds it before the line and column.
 void ouo_err_msg_print(OuoError *err, const char *src, const char *path);
 
+typedef struct {
+  bool failed;
+  OuoErrors errors;
+} OuoStageResult;
+
+void ouo_res_free(OuoStageResult *res);
+
 //
 // Lexing
 //
@@ -481,35 +488,17 @@ typedef struct OuoAst {
   } as;
 } OuoAst;
 
-/// Owns memory for `ast` and `errors`.
-typedef struct {
-  bool failed;
-  size_t line;
-  OuoAst *ast;
-  OuoErrors errors;
-} OuoParseResult;
+/// Caller owns the result and `res_ast`.
+OuoStageResult ouo_parse(const char *src, OuoAst **res_ast);
 
-/// Caller owns the parse result's `ast` and `errors`.
-void ouo_parse(const char *src, OuoParseResult *res);
-
-/// Frees the parse result's `ast` and `errors`.
-void ouo_p_res_free(OuoParseResult *res);
+void ouo_ast_free(OuoAst *ast);
 
 //
 // Static analysis
 //
 
-/// Owns memory for `errors`.
-typedef struct {
-  bool failed;
-  OuoErrors errors;
-} OuoAnalyzeResult;
-
-/// Caller owns the analyze result's `errors`.
-void ouo_analyze(OuoAst *ast, OuoAnalyzeResult *res);
-
-/// Frees the analyze result's `errors`.
-void ouo_a_res_free(OuoAnalyzeResult *res);
+/// Caller owns the result.
+OuoStageResult ouo_analyze(OuoAst *ast);
 
 //
 // Compilation
@@ -941,6 +930,8 @@ void ouo_err_msg_print(OuoError *err, const char *src, const char *path) {
   ouo_printerr("\n");
 }
 
+void ouo_res_free(OuoStageResult *res) { ouo_da_free(res->errors); }
+
 //
 // Lexing
 //
@@ -951,12 +942,11 @@ typedef struct {
   OuoCodePosition pos;
 } _OuoLexer;
 
-static inline void _ouo_l_init(
-    _OuoLexer *l, OuoParseResult *res, const char *src) {
+static inline void _ouo_l_init(_OuoLexer *l, size_t lines, const char *src) {
   l->tok_start = src;
   l->curr = src;
 
-  l->pos.line = res->line + 1;
+  l->pos.line = lines + 1;
   l->pos.col = 1;
   l->pos.line_start = src;
 }
@@ -1234,7 +1224,7 @@ typedef struct {
   bool ignore_newline;
 
   bool panic_mode;
-  OuoParseResult *res;
+  OuoStageResult *res;
 
   struct {
     const struct _OuoParseRule *items;
@@ -1310,7 +1300,7 @@ static inline void _ouo_p_advance(_OuoParser *p) {
   }
 }
 
-static inline void _ouo_p_init(_OuoParser *p, _OuoLexer *l, OuoParseResult *res,
+static inline void _ouo_p_init(_OuoParser *p, _OuoLexer *l, OuoStageResult *res,
     const _OuoParseRule *rules, size_t rules_count) {
   res->failed = false;
   p->l = l;
@@ -1963,9 +1953,10 @@ static const _OuoParseRule _ouo_p_rules[] = {
     [OUO_TOK_BRACE_OPN] = {_ouo_p_block, NULL, _OUO_PREC_LOWEST},
 };
 
-void ouo_parse(const char *src, OuoParseResult *res) {
+OuoStageResult ouo_parse(const char *src, OuoAst **res_ast) {
   _OuoLexer l = {0};
-  _ouo_l_init(&l, res, src);
+  _ouo_l_init(&l, 0, src);
+  // _ouo_l_init(&l, res, src);
 
 #ifdef OUO_DEBUG
   for (;;) {
@@ -1974,28 +1965,32 @@ void ouo_parse(const char *src, OuoParseResult *res) {
     if (tok.kind == OUO_TOK_EOF) break;
   }
   ouo_printdbg("\n");
-  _ouo_l_init(&l, res, src);
+  _ouo_l_init(&l, 0, src);
+  // _ouo_l_init(&l, res, src);
 #endif
 
+  OuoStageResult res = {0};
   _OuoParser p = {0};
-  _ouo_p_init(&p, &l, res, _ouo_p_rules, ouo_arr_len(_ouo_p_rules));
+  _ouo_p_init(&p, &l, &res, _ouo_p_rules, ouo_arr_len(_ouo_p_rules));
 
-  res->ast = _ouo_p_module(&p);
-  res->line = l.pos.line;
+  *res_ast = _ouo_p_module(&p);
+  // res->line = l.pos.line;
 
 #ifdef OUO_DEBUG
-  _ouo_ast_dump(res->ast);
+  _ouo_ast_dump(*res_ast);
   ouo_printdbg("\n");
 #endif
+
+  return res;
 }
 
-static void _ouo_ast_free(OuoAst *ast) {
+void ouo_ast_free(OuoAst *ast) {
   if (ast == NULL) return;
 
   switch (ast->kind) {
     case OUO_AST_MODULE:
     case OUO_AST_BLOCK:
-      OUO_DA_FOREACH(OuoAst *, child, &ast->children) { _ouo_ast_free(*child); }
+      OUO_DA_FOREACH(OuoAst *, child, &ast->children) { ouo_ast_free(*child); }
       ouo_da_free(ast->children);
       break;
     case OUO_AST_IDENT:
@@ -2006,59 +2001,54 @@ static void _ouo_ast_free(OuoAst *ast) {
     case OUO_AST_LIT_BOOL: break;
     case OUO_AST_LIT_STR: ouo_da_free(ast->as.lit_str); break;
     case OUO_AST_LIT_TYPE:
-      if (ast->as.lit_type.ident != NULL) _ouo_ast_free(ast->as.lit_type.ident);
+      if (ast->as.lit_type.ident != NULL) ouo_ast_free(ast->as.lit_type.ident);
       break;
     // Expressions
     case OUO_AST_ASSIGN:
-      _ouo_ast_free(ast->as.assign.target);
-      _ouo_ast_free(ast->as.assign.value);
+      ouo_ast_free(ast->as.assign.target);
+      ouo_ast_free(ast->as.assign.value);
       break;
     case OUO_AST_BINARY:
-      _ouo_ast_free(ast->as.binary.left);
-      _ouo_ast_free(ast->as.binary.right);
+      ouo_ast_free(ast->as.binary.left);
+      ouo_ast_free(ast->as.binary.right);
       break;
-    case OUO_AST_UNARY: _ouo_ast_free(ast->as.unary.right); break;
+    case OUO_AST_UNARY: ouo_ast_free(ast->as.unary.right); break;
     case OUO_AST_IF:
-      _ouo_ast_free(ast->as.if_expr.condition);
-      _ouo_ast_free(ast->as.if_expr.then_branch);
-      _ouo_ast_free(ast->as.if_expr.else_branch);
+      ouo_ast_free(ast->as.if_expr.condition);
+      ouo_ast_free(ast->as.if_expr.then_branch);
+      ouo_ast_free(ast->as.if_expr.else_branch);
       break;
     case OUO_AST_WHILE:
-      _ouo_ast_free(ast->as.while_expr.condition);
-      _ouo_ast_free(ast->as.while_expr.body);
+      ouo_ast_free(ast->as.while_expr.condition);
+      ouo_ast_free(ast->as.while_expr.body);
       break;
     case OUO_AST_CALL:
-      _ouo_ast_free(ast->as.call.target);
-      OUO_DA_FOREACH(OuoAst *, child, &ast->children) { _ouo_ast_free(*child); }
+      ouo_ast_free(ast->as.call.target);
+      OUO_DA_FOREACH(OuoAst *, child, &ast->children) { ouo_ast_free(*child); }
       ouo_da_free(ast->children);
       break;
     // Statements
     case OUO_AST_EXPR_STMT:
     case OUO_AST_PRINT:
-    case OUO_AST_RETURN: _ouo_ast_free(ast->as.expr_stmt.expr); break;
+    case OUO_AST_RETURN: ouo_ast_free(ast->as.expr_stmt.expr); break;
     case OUO_AST_DECL_VAR:
       if (ast->as.decl_var.type_annot != NULL)
-        _ouo_ast_free(ast->as.decl_var.type_annot);
-      _ouo_ast_free(ast->as.decl_var.value);
+        ouo_ast_free(ast->as.decl_var.type_annot);
+      ouo_ast_free(ast->as.decl_var.value);
       break;
     case OUO_AST_DECL_FN:
       OUO_DA_FOREACH(OuoAstNameType, param, &ast->as.decl_fn.params) {
-        _ouo_ast_free(param->type_annot);
+        ouo_ast_free(param->type_annot);
       }
       ouo_da_free(ast->as.decl_fn.params);
       if (ast->as.decl_fn.return_type_annot != NULL)
-        _ouo_ast_free(ast->as.decl_fn.return_type_annot);
-      _ouo_ast_free(ast->as.decl_fn.body);
+        ouo_ast_free(ast->as.decl_fn.return_type_annot);
+      ouo_ast_free(ast->as.decl_fn.body);
       break;
-    case OUO_AST_DECL_TYPE: _ouo_ast_free(ast->as.decl_type.type_annot); break;
+    case OUO_AST_DECL_TYPE: ouo_ast_free(ast->as.decl_type.type_annot); break;
   }
 
   ouo_free(ast);
-}
-
-void ouo_p_res_free(OuoParseResult *res) {
-  _ouo_ast_free(res->ast);
-  ouo_da_free(res->errors);
 }
 
 #ifdef OUO_DEBUG
@@ -2219,7 +2209,7 @@ static void _ouo_ast_dump(OuoAst *ast) {
 
 typedef struct {
   bool panic_mode;
-  OuoAnalyzeResult *res;
+  OuoStageResult *res;
 } _OuoAnalyzer;
 
 static void _ouo_a_err_append(_OuoAnalyzer *c, OuoError *err) {
@@ -2247,7 +2237,7 @@ static void _ouo_a_err_append(_OuoAnalyzer *c, OuoError *err) {
     } \
   } while (0)
 
-static inline void _ouo_a_init(_OuoAnalyzer *a, OuoAnalyzeResult *res) {
+static inline void _ouo_a_init(_OuoAnalyzer *a, OuoStageResult *res) {
   a->res = res;
 }
 
@@ -2256,14 +2246,15 @@ static inline void _ouo_a_ast_visit(_OuoAnalyzer *a, OuoAst *ast) {
   _ouo_a_err(a, ast->tok, OUO_ERR_ANALYZE_FAIL, "TODO");
 }
 
-void ouo_analyze(OuoAst *ast, OuoAnalyzeResult *res) {
+OuoStageResult ouo_analyze(OuoAst *ast) {
+  OuoStageResult res = {0};
   _OuoAnalyzer a = {0};
-  _ouo_a_init(&a, res);
+  _ouo_a_init(&a, &res);
 
   _ouo_a_ast_visit(&a, ast);
-}
 
-void ouo_a_res_free(OuoAnalyzeResult *res) { ouo_da_free(res->errors); }
+  return res;
+}
 
 //
 // Compilation
@@ -3307,11 +3298,11 @@ void ouo_a_res_free(OuoAnalyzeResult *res) { ouo_da_free(res->errors); }
 //         // Arithmetic
 //         case OUO_TOK_MINUS:
 //           if (ast->as.unary.right->kind == OUO_AST_LIT_INT) {
-//             _ouo_ast_free(ast->as.unary.right);
+//             ouo_ast_free(ast->as.unary.right);
 //             ast->kind = OUO_AST_LIT_INT;
 //             ast->as.lit_int = -ast->as.unary.right->as.lit_int;
 //           } else if (ast->as.unary.right->kind == OUO_AST_LIT_FLOAT) {
-//             _ouo_ast_free(ast->as.unary.right);
+//             ouo_ast_free(ast->as.unary.right);
 //             ast->kind = OUO_AST_LIT_FLOAT;
 //             ast->as.lit_float = -ast->as.unary.right->as.lit_float;
 //           }
