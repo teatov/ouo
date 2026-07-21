@@ -16,10 +16,10 @@ static char *_src_wrap(const char *setup, const char *type, const char *expr) {
   return buf;
 }
 
-static inline void test_exec_ok(const char *name, const char *src) {
-  TestOptions opt = {.stage = TEST_INTERPRET};
-  test(name, src, &opt);
-}
+// static inline void test_exec_ok(const char *name, const char *src) {
+//   TestOptions opt = {.stage = TEST_INTERPRET};
+//   test(name, src, &opt);
+// }
 
 static inline void test_exec_stack_empty(const char *name, const char *src) {
   TestOptions opt = {.stage = TEST_INTERPRET};

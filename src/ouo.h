@@ -41,7 +41,9 @@
 // Assertions
 
 #define ouo_assert(expr, err_code, ...) \
-  if (!(expr)) ouo_abort(err_code, __VA_ARGS__)
+  do { \
+    if (!(expr)) ouo_abort(err_code, __VA_ARGS__); \
+  } while (0)
 
 #define ouo_assertf(expr, err_code, ...) \
   do { \
@@ -777,43 +779,48 @@ static const char *_ouo_type_kind_str(OuoTypeKind kind) {
   return "";
 }
 
+static void _ouo_type_str_append(
+    OuoString *str, const char *to_append, size_t to_append_len) {
+  ouo_da_append_many(str, to_append, to_append_len);
+}
+
 static OuoString _ouo_type_str_rec(OuoType *type, size_t depth) {
   depth--;
   OuoString str = {0};
   if (depth == 0) {
-    ouo_da_append_many(&str, "...", 3);
+    _ouo_type_str_append(&str, "...", 3);
     return str;
   }
   const char *kind_str = _ouo_type_kind_str(type->kind);
   size_t kind_strlen = strlen(kind_str);
-  ouo_da_append_many(&str, kind_str, kind_strlen);
+  _ouo_type_str_append(&str, kind_str, kind_strlen);
 
   if (type->kind == OUO_TYPE_FN) {
-    ouo_da_append_many(&str, "(", 1);
+    _ouo_type_str_append(&str, "(", 1);
     for (size_t i = 0; i < type->ref->as.t_fn.params.count; i++) {
       OuoNameType *param = &type->ref->as.t_fn.params.items[i];
-      ouo_da_append_many(&str, param->name.start, param->name.len);
-      ouo_da_append_many(&str, ": ", 2);
+      _ouo_type_str_append(&str, param->name.start, param->name.len);
+      _ouo_type_str_append(&str, ": ", 2);
 
       OuoString param_str = _ouo_type_str_rec(&param->type, depth);
-      ouo_da_append_many(&str, param_str.items, param_str.count);
+      _ouo_type_str_append(&str, param_str.items, param_str.count);
       ouo_da_free(param_str);
 
       if (i < type->ref->as.t_fn.params.count - 1)
-        ouo_da_append_many(&str, ", ", 2);
+        _ouo_type_str_append(&str, ", ", 2);
     }
-    ouo_da_append_many(&str, "): ", 3);
+    _ouo_type_str_append(&str, "): ", 3);
 
     OuoString return_type_str =
         _ouo_type_str_rec(&type->ref->as.t_fn.return_type, depth);
-    ouo_da_append_many(&str, return_type_str.items, return_type_str.count);
+    _ouo_type_str_append(&str, return_type_str.items, return_type_str.count);
     ouo_da_free(return_type_str);
   } else if (type->kind == OUO_TYPE_TYPE) {
-    ouo_da_append_many(&str, "[", 1);
+    _ouo_type_str_append(&str, "[", 1);
     OuoString type_str = _ouo_type_str_rec(&type->ref->as.t_type, depth);
-    ouo_da_append_many(&str, type_str.items, type_str.count);
+    _ouo_type_str_append(&str, type_str.items, type_str.count);
     ouo_da_free(type_str);
-    ouo_da_append_many(&str, "]", 3);
+    _ouo_type_str_append(&str, "]", 3);
   }
 
   return str;
@@ -1242,7 +1249,11 @@ typedef struct _OuoParseRule {
   _OuoPrecedence prec;
 } _OuoParseRule;
 
-#define _ouo_p_err_append(p, tok, err_code, ...) \
+static void _ouo_p_err_append(_OuoParser *p, OuoError *err) {
+  ouo_da_append(&p->res->errors, *err);
+}
+
+#define _ouo_p_err_add(p, tok, err_code, ...) \
   do { \
     OuoError err = { \
         .code = (err_code), \
@@ -1251,7 +1262,7 @@ typedef struct _OuoParseRule {
         .msg = {0}, \
     }; \
     _ouo_err_sprintf(err, __VA_ARGS__); \
-    ouo_da_append(&(p)->res->errors, err); \
+    _ouo_p_err_append(p, &err); \
   } while (0)
 
 #define _ouo_p_err(p, tok, err_code, ...) \
@@ -1259,7 +1270,7 @@ typedef struct _OuoParseRule {
     if (!(p)->panic_mode) { \
       (p)->res->failed = true; \
       (p)->panic_mode = true; \
-      _ouo_p_err_append(p, tok, err_code, __VA_ARGS__); \
+      _ouo_p_err_add(p, tok, err_code, __VA_ARGS__); \
     } \
   } while (0)
 
@@ -1583,7 +1594,7 @@ static OuoAst *_ouo_p_grouping(_OuoParser *p) {
     bool panic_prev = p->panic_mode;
     _ouo_p_err_unexpected(p, p->peek, OUO_TOK_PAREN_CLS);
     if (!panic_prev)
-      _ouo_p_err_append(p, tok, OUO_ERR_NOTE, "Grouping starts here.");
+      _ouo_p_err_add(p, tok, OUO_ERR_NOTE, "Grouping starts here.");
     return ast;
   }
 
@@ -1605,7 +1616,7 @@ static OuoAst *_ouo_p_block(_OuoParser *p) {
     bool panic_prev = p->panic_mode;
     _ouo_p_err_unexpected(p, p->curr, OUO_TOK_BRACE_CLS);
     if (!panic_prev)
-      _ouo_p_err_append(p, ast->tok, OUO_ERR_NOTE, "Block starts here.");
+      _ouo_p_err_add(p, ast->tok, OUO_ERR_NOTE, "Block starts here.");
     return ast;
   }
 
@@ -2208,7 +2219,11 @@ typedef struct {
 #endif
 } _OuoBuiltin;
 
-#define _ouo_c_err_append(c, tok, err_code, ...) \
+static void _ouo_c_err_append(_OuoCompiler *c, OuoError *err) {
+  ouo_da_append(&c->res->errors, *err);
+}
+
+#define _ouo_c_err_add(c, tok, err_code, ...) \
   do { \
     OuoError err = { \
         .code = (err_code), \
@@ -2217,7 +2232,7 @@ typedef struct {
         .msg = {0}, \
     }; \
     _ouo_err_sprintf(err, __VA_ARGS__); \
-    ouo_da_append(&(c)->res->errors, err); \
+    _ouo_c_err_append(c, &err); \
   } while (0)
 
 #define _ouo_c_err(c, tok, err_code, ...) \
@@ -2225,7 +2240,7 @@ typedef struct {
     if (!(c)->panic_mode) { \
       (c)->res->failed = true; \
       (c)->panic_mode = true; \
-      _ouo_c_err_append(c, tok, err_code, __VA_ARGS__); \
+      _ouo_c_err_add(c, tok, err_code, __VA_ARGS__); \
     } \
   } while (0)
 
@@ -2312,7 +2327,7 @@ static inline OuoSymbol *_ouo_c_add_local_sym(
   if (_ouo_c_find_local_or_global_sym(c, &name->str, &found_sym)) {
     _ouo_c_err(c, *name, OUO_ERR_SEMANTIC, "Symbol '%.*s' is already defined.",
         OUO_STRSL_FMT(found_sym->name));
-    _ouo_c_err_append(
+    _ouo_c_err_add(
         c, found_sym->tok, OUO_ERR_NOTE, "Previous definition here.");
     return NULL;
   }
@@ -2333,7 +2348,7 @@ static inline OuoSymbol *_ouo_c_add_global_sym(
   if (_ouo_c_find_local_or_global_sym(c, &name->str, &found_sym)) {
     _ouo_c_err(c, *name, OUO_ERR_SEMANTIC, "Symbol '%.*s' is already defined.",
         OUO_STRSL_FMT(found_sym->name));
-    _ouo_c_err_append(
+    _ouo_c_err_add(
         c, found_sym->tok, OUO_ERR_NOTE, "Previous definition here.");
     return NULL;
   }
